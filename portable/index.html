@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="__THEME_COLOR__" />
+    <meta name="description" content="__APP_DESCRIPTION__" />
+    <meta name="color-scheme" content="light" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https:; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <link rel="manifest" href="./manifest.static.webmanifest" />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+    <title>__APP_NAME__</title>
+    <script src="./runtime-config.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>Для семейной книги нужно разрешить JavaScript в браузере.</noscript>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

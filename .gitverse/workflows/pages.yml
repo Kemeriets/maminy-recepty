@@ -1,0 +1,40 @@
+name: Publish GitVerse Pages
+
+on:
+  push:
+    branches: ["master", "main"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test core logic
+        run: npm run test:unit
+
+      - name: Build portable PWA
+        run: npm run build:portable
+
+      - name: Upload Pages artifact
+        uses: gitverse/upload-pages-artifact@v1.0.0
+        with:
+          path: dist-portable
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy
+        uses: gitverse/deploy-pages@v1.0.0
