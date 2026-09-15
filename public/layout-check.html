@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Проверка размеров интерфейса</title>
+  <style>
+    body { margin: 0; padding: 24px; background: #ece8e2; color: #2d2522; font: 16px/1.5 system-ui,sans-serif; }
+    h1 { font-size: 24px; margin: 0 0 8px; }
+    p { max-width: 900px; }
+    main { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 24px; }
+    section { min-width: 0; }
+    h2 { margin: 16px 0 8px; font-size: 16px; }
+    iframe { display: block; border: 1px solid #d7c7b7; border-radius: 16px; background: white; height: 820px; }
+  </style>
+</head>
+<body>
+  <h1>Проверка размеров интерфейса</h1>
+  <p>Инструмент для разработки, не часть навигации приложения. Окна используют настоящие размеры CSS и данные этого браузера. Не подключайте здесь другой Яндекс-аккаунт. Данные сайта не очищаются.</p>
+  <main>
+    <section><h2>Узкий телефон · 320 px</h2><iframe id="phone320" title="Телефон шириной 320 пикселей" src="./#catalog" width="320"></iframe></section>
+    <section><h2>Телефон · 390 px</h2><iframe id="phone390" title="Телефон шириной 390 пикселей" src="./#catalog" width="390"></iframe></section>
+  </main>
+</body>
+</html>
