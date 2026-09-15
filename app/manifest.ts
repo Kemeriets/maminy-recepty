@@ -6,7 +6,7 @@ export default function manifest(): MetadataRoute.Manifest {
     id: "/",
     name: APP_CONFIG.appName,
     short_name: APP_CONFIG.shortName,
-    description: "Тёплая семейная книга рецептов, которая всегда под рукой.",
+    description: "Рецепты, фотографии и удобный режим готовки.",
     lang: "ru",
     start_url: "/",
     scope: "/",

@@ -87,13 +87,13 @@ export function BookProvider({ children }: { children: React.ReactNode }) {
         if (!navigator.onLine) setSyncState("offline");
         else if (repository.provider() === "local" || (repository.provider() === "yandex-disk" && !connected)) setSyncState("local");
         else setSyncState(remote ? "synced" : "syncing");
-        if (loggedIn) toast.success("Яндекс Диск подключён", { description: "Синхронизируем семейную книгу." });
+        if (loggedIn) toast.success("Яндекс Диск подключён", { description: "Синхронизируем рецепты." });
         if (navigator.onLine && (repository.provider() === "sites" || connected)) await refresh();
       } catch (value) {
         if (!active) return;
         setLoading(false);
         setSyncState("error");
-        toast.error("Не удалось открыть семейное облако", { description: value instanceof Error ? value.message : "Книга продолжит работать на этом устройстве." });
+        toast.error("Не удалось выполнить синхронизацию", { description: value instanceof Error ? value.message : "Рецепты доступны на этом устройстве. Проверьте интернет и подключение Яндекс Диска." });
       }
     })();
     const online = () => void refresh();
@@ -121,15 +121,18 @@ export function BookProvider({ children }: { children: React.ReactNode }) {
 
   const perform = useCallback(async (raw: BookOperationInput) => {
     const operation = { ...raw, opId: createId("op"), createdAt: nowIso() } as BookOperation;
-    const next = applyOperation(snapshotRef.current, operation);
+    const previous = snapshotRef.current;
+    const next = applyOperation(previous, operation);
     updateSnapshot(next);
-    const saved = await repository.persist(next, operation);
+    let saved: boolean;
+    try { saved = await repository.persist(next, operation); }
+    catch (error) { if (snapshotRef.current === next) updateSnapshot(previous); throw error; }
     if (!saved) {
       const connected = await repository.cloudConnected();
       setCloudConnected(connected);
       setPendingCount((await listQueuedOperations().catch(() => [])).length);
-      setSyncState(repository.provider() === "yandex-disk" && !connected ? "local" : "offline");
-      toast("Изменение сохранено на телефоне", { description: connected ? "Отправим в семейную книгу, когда появится интернет." : "Подключите семейное облако в настройках, чтобы видеть его на других устройствах." });
+      setSyncState(!connected ? "local" : navigator.onLine ? "error" : "offline");
+      if (connected) toast("Изменение сохранено на устройстве", { description: "Отправим на Яндекс Диск, когда восстановится соединение." });
     } else {
       const hasPendingImages = next.recipes.some((recipe) => recipe.coverImage?.url.startsWith("data:") || recipe.originalPageImages.some((image) => image.url.startsWith("data:")) || recipe.steps.some((step) => step.image?.url.startsWith("data:")));
       if (hasPendingImages) {
@@ -141,15 +144,18 @@ export function BookProvider({ children }: { children: React.ReactNode }) {
 
   const performMany = useCallback(async (rawOperations: BookOperationInput[]) => {
     const operations = rawOperations.map((raw) => ({ ...raw, opId: createId("op"), createdAt: nowIso() }) as BookOperation);
-    let next = snapshotRef.current;
+    const previous = snapshotRef.current;
+    let next = previous;
     for (const operation of operations) next = applyOperation(next, operation);
     updateSnapshot(next);
-    const saved = await repository.persistMany(next, operations);
+    let saved: boolean;
+    try { saved = await repository.persistMany(next, operations); }
+    catch (error) { if (snapshotRef.current === next) updateSnapshot(previous); throw error; }
     if (!saved) {
       const connected = await repository.cloudConnected();
       setCloudConnected(connected);
       setPendingCount((await listQueuedOperations().catch(() => [])).length);
-      setSyncState(repository.provider() === "yandex-disk" && !connected ? "local" : "offline");
+      setSyncState(!connected ? "local" : navigator.onLine ? "error" : "offline");
     } else {
       const hasPendingImages = next.recipes.some((recipe) => recipe.coverImage?.url.startsWith("data:") || recipe.originalPageImages.some((image) => image.url.startsWith("data:")));
       if (hasPendingImages) {

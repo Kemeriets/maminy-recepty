@@ -52,10 +52,11 @@ async function transaction<T>(storeName: string, mode: IDBTransactionMode, actio
   return new Promise((resolve, reject) => {
     const tx = db.transaction(storeName, mode);
     const request = action(tx.objectStore(storeName));
-    request.onsuccess = () => resolve(request.result);
+    let result: T;
+    request.onsuccess = () => { result = request.result; };
     request.onerror = () => reject(request.error ?? new Error("Ошибка локального хранилища"));
-    tx.oncomplete = () => db.close();
-    tx.onerror = () => reject(tx.error ?? new Error("Ошибка локального хранилища"));
+    tx.oncomplete = () => { db.close(); resolve(result); };
+    tx.onerror = tx.onabort = () => { db.close(); reject(tx.error ?? new Error("Не удалось сохранить данные на устройстве")); };
   });
 }
 
@@ -69,6 +70,20 @@ export async function setLocalSnapshot(snapshot: BookSnapshot): Promise<void> {
 
 export async function queueOperation(operation: BookOperation): Promise<void> {
   await transaction<IDBValidKey>("operations", "readwrite", (store) => store.put(operation));
+}
+
+// Snapshot and its synchronization queue must either both commit or both stay unchanged.
+export async function saveSnapshotAndOperations(snapshot: BookSnapshot, operations: BookOperation[]): Promise<void> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(["snapshot", "operations"], "readwrite");
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = tx.onabort = () => { db.close(); reject(tx.error ?? new Error("Не удалось сохранить данные на устройстве")); };
+    try {
+      tx.objectStore("snapshot").put(snapshot, "current");
+      for (const operation of operations) tx.objectStore("operations").put(operation);
+    } catch (error) { tx.abort(); reject(error); }
+  });
 }
 
 export async function listQueuedOperations(): Promise<BookOperation[]> {

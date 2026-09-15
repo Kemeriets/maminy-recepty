@@ -1,14 +1,14 @@
 export const APP_CONFIG = {
-  appName: "Мамины рецепты",
+  appName: "Рецепты",
   shortName: "Рецепты",
   momName: "Мама",
   giftFrom: "Дима",
   familyName: "Семья",
-  dedicationTitle: "Для тебя, мама",
+  dedicationTitle: "Книга рецептов",
   dedicationText:
-    "Я хотел сохранить все твои рецепты, чтобы они никогда не потерялись. Теперь здесь хватит места и для тех, которые появятся потом.",
-  showGiftIntro: true,
-  version: "1.0.0",
+    "Добавляйте рецепты, находите нужное блюдо и готовьте в удобном режиме.",
+  showGiftIntro: false,
+  version: "1.2.0",
   theme: {
     primary: "#6c2737",
     primaryDark: "#4b1825",
@@ -27,7 +27,8 @@ export const APP_CONFIG = {
     { name: "Заготовки", icon: "jar" },
     { name: "Другое", icon: "bookmark" },
   ],
-  defaultAuthors: ["Мама", "Бабушка", "Дима", "Папа", "Семейный рецепт"],
+  // Legacy author data is still accepted in backups, but no authors are created or shown.
+  defaultAuthors: [],
 } as const;
 
 export type AppConfig = typeof APP_CONFIG;

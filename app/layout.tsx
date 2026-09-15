@@ -5,7 +5,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: { default: APP_CONFIG.appName, template: `%s · ${APP_CONFIG.appName}` },
-  description: "Личная семейная книга рецептов, фотографий и тёплых воспоминаний.",
+  description: "Рецепты, фотографии, список покупок и удобный режим готовки.",
   applicationName: APP_CONFIG.appName,
   manifest: "/manifest.webmanifest",
   appleWebApp: { capable: true, title: APP_CONFIG.appName, statusBarStyle: "default" },

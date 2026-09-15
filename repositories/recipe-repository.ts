@@ -12,6 +12,7 @@ import {
   removePendingImage,
   removeQueuedOperation,
   setLocalSnapshot,
+  saveSnapshotAndOperations,
 } from "../services/local-store";
 import { uploadPendingImage } from "../services/image-service";
 import { getRuntimeConfig } from "../services/runtime-config";
@@ -152,8 +153,7 @@ export class HybridRecipeRepository implements RecipeRepository {
   }
 
   async persist(snapshot: BookSnapshot, operation: BookOperation): Promise<boolean> {
-    await setLocalSnapshot(snapshot);
-    await queueOperation(operation);
+    await saveSnapshotAndOperations(snapshot, [operation]);
     if (this.provider() === "local" || (this.provider() === "yandex-disk" && !(await isYandexConnected()))) return false;
     try {
       if (this.provider() === "yandex-disk") {
@@ -171,8 +171,7 @@ export class HybridRecipeRepository implements RecipeRepository {
   }
 
   async persistMany(snapshot: BookSnapshot, operations: BookOperation[]): Promise<boolean> {
-    await setLocalSnapshot(snapshot);
-    await Promise.all(operations.map(queueOperation));
+    await saveSnapshotAndOperations(snapshot, operations);
     if (this.provider() === "local" || (this.provider() === "yandex-disk" && !(await isYandexConnected()))) return false;
     try {
       if (this.provider() === "yandex-disk") {

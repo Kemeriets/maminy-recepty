@@ -2,17 +2,16 @@
 
 import { Clock3, Heart, ImageIcon } from "lucide-react";
 import { totalRecipeMinutes } from "../features/book/logic";
-import type { Author, Category, Recipe } from "../types/book";
+import type { Category, Recipe } from "../types/book";
 
 interface RecipeCardProps {
   recipe: Recipe;
   category?: Category;
-  author?: Author;
   onOpen: () => void;
   onFavorite: () => void;
 }
 
-export function RecipeCard({ recipe, category, author, onOpen, onFavorite }: RecipeCardProps) {
+export function RecipeCard({ recipe, category, onOpen, onFavorite }: RecipeCardProps) {
   const minutes = totalRecipeMinutes(recipe);
   const image = recipe.coverImage?.thumbnailUrl || recipe.coverImage?.url || recipe.originalPageImages[0]?.thumbnailUrl || recipe.originalPageImages[0]?.url;
 
@@ -35,7 +34,6 @@ export function RecipeCard({ recipe, category, author, onOpen, onFavorite }: Rec
           <h3>{recipe.title}</h3>
           <div className="recipe-card__meta">
             {minutes ? <span><Clock3 />{minutes} мин</span> : null}
-            {author ? <span>{author.name}</span> : null}
           </div>
         </div>
       </button>

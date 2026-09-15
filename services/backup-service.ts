@@ -76,7 +76,7 @@ export async function createZipBackup(snapshot: BookSnapshot): Promise<Uint8Arra
   }
   const portable: ZipBackupFile = { ...createBackupObject(snapshot), mediaIndex };
   files["recipes.json"] = strToU8(JSON.stringify(portable, null, 2));
-  files["README.txt"] = strToU8("Резервная копия приложения «Мамины рецепты». Для восстановления загрузите этот ZIP в разделе «Импорт и резервная копия».\n");
+  files["README.txt"] = strToU8("Резервная копия приложения «Рецепты». Для восстановления загрузите этот ZIP в разделе «Импорт и восстановление».\n");
   return zipSync(files, { level: 6 });
 }
 

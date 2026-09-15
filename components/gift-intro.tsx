@@ -27,7 +27,6 @@ export function GiftIntro({ forced = false, onClose }: { forced?: boolean; onClo
         <div className="gift-intro__spine" aria-hidden="true" />
         <div className="gift-intro__content">
           <div className="gift-intro__mark" aria-hidden="true"><BookHeart /></div>
-          <p className="gift-intro__eyebrow">Семейная книга</p>
           <DialogTitle className="gift-intro__title">{APP_CONFIG.appName}</DialogTitle>
           <DialogDescription className="gift-intro__description">
             <strong>{APP_CONFIG.dedicationTitle}</strong>

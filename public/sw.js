@@ -1,4 +1,4 @@
-const CACHE_VERSION = "maminy-recipes-v1.1.0";
+const CACHE_VERSION = "maminy-recipes-v1.2.0";
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 const DB_NAME = "maminy-recipes";
@@ -26,7 +26,7 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((key) => !key.startsWith(CACHE_VERSION)).map((key) => caches.delete(key))))
+      .then((keys) => Promise.all(keys.filter((key) => key.startsWith("maminy-recipes-") && !key.startsWith(CACHE_VERSION)).map((key) => caches.delete(key))))
       .then(() => self.clients.claim()),
   );
 });
@@ -134,6 +134,7 @@ self.addEventListener("fetch", (event) => {
   const scopePath = new URL(self.registration.scope).pathname;
   const relativePath = url.pathname.startsWith(scopePath) ? url.pathname.slice(scopePath.length) : url.pathname.replace(/^\//, "");
   if (relativePath.startsWith("__images/")) { event.respondWith(yandexImage(url, relativePath)); return; }
+  if (relativePath === "runtime-config.js") { event.respondWith(networkFirst(request)); return; }
   if (request.mode === "navigate") { event.respondWith(networkFirst(request, scoped(""))); return; }
   if (url.pathname === "/api/snapshot" || url.pathname.startsWith("/api/images/")) { event.respondWith(networkFirst(request)); return; }
   if (url.pathname.startsWith("/_next/static/") || /\.(?:css|js|svg|png|jpe?g|webp|avif|woff2?)$/i.test(url.pathname)) event.respondWith(cacheFirst(request));

@@ -76,7 +76,7 @@ export function ImportCenter({ snapshot, onBack, onImport }: ImportCenterProps) 
   return (
     <section className="page-view import-page">
       <Button variant="ghost" onClick={onBack} className="back-button"><ArrowLeft /> Настройки</Button>
-      <header className="page-heading"><div><p className="eyebrow">Для Димы</p><h1>Перенос старой книги</h1><p>Переписывайте страницы по одной или загрузите сразу целую пачку из JSON/ZIP. Оригинальные фотографии останутся рядом с рецептами.</p></div></header>
+      <header className="page-heading"><div><h1>Импорт рецептов</h1><p>Переписывайте страницы по одной или загрузите сразу много рецептов из файла. Фотографии страниц сохранятся рядом с рецептами.</p></div></header>
 
       <Tabs defaultValue="manual" className="import-tabs">
         <TabsList className="import-tabs__list" aria-label="Способ переноса">
@@ -132,7 +132,6 @@ export function ImportCenter({ snapshot, onBack, onImport }: ImportCenterProps) 
 interface ManualDraft {
   title: string;
   category: string;
-  author: string;
   ingredients: string;
   steps: string;
   note: string;
@@ -142,7 +141,6 @@ interface ManualDraft {
 const EMPTY_MANUAL_DRAFT: ManualDraft = {
   title: "",
   category: "",
-  author: "",
   ingredients: "",
   steps: "",
   note: "",
@@ -202,7 +200,6 @@ function ManualImportDesk({ snapshot, onImport }: Pick<ImportCenterProps, "snaps
           recipes: [{
             title: draft.title.trim(),
             category: draft.category.trim() || undefined,
-            author: draft.author.trim() || undefined,
             ingredients,
             steps,
             note: draft.note.trim() || undefined,
@@ -244,14 +241,13 @@ function ManualImportDesk({ snapshot, onImport }: Pick<ImportCenterProps, "snaps
       </aside>
       <div className="manual-import__form">
         <label className="field"><span>Название блюда *</span><Input value={draft.title} onChange={(event) => update("title", event.target.value)} autoFocus placeholder="Например, торт «Черепаха»" /></label>
-        <div className="field-grid">
+        <div>
           <label className="field"><span>Категория</span><Input list="manual-category-list" value={draft.category} onChange={(event) => update("category", event.target.value)} placeholder="Десерты" /><datalist id="manual-category-list">{snapshot.categories.map((item) => <option key={item.id} value={item.name} />)}</datalist></label>
-          <label className="field"><span>Автор</span><Input list="manual-author-list" value={draft.author} onChange={(event) => update("author", event.target.value)} placeholder="Мама" /><datalist id="manual-author-list">{snapshot.authors.map((item) => <option key={item.id} value={item.name} />)}</datalist></label>
         </div>
         <label className="field"><span>Ингредиенты * — по одному в строке</span><Textarea value={draft.ingredients} onChange={(event) => update("ingredients", event.target.value)} rows={7} placeholder={"Мука | 300 | г\nЯйца | 4 | шт.\nСоль | по вкусу |"} /><small>Формат: название | количество | единица | заметка</small></label>
         <label className="field"><span>Приготовление * — один шаг в строке</span><Textarea value={draft.steps} onChange={(event) => update("steps", event.target.value)} rows={8} placeholder={"Смешать ингредиенты.\nВыпекать 35 минут при 180 °C."} /></label>
         <label className="field"><span>Заметка</span><Textarea value={draft.note} onChange={(event) => update("note", event.target.value)} rows={3} placeholder="Тонкости и исправления" /></label>
-        <label className="field"><span>Семейная история</span><Textarea value={draft.familyStory} onChange={(event) => update("familyStory", event.target.value)} rows={3} placeholder="Когда и кто обычно готовил это блюдо" /></label>
+        <label className="field"><span>Источник или комментарий</span><Textarea value={draft.familyStory} onChange={(event) => update("familyStory", event.target.value)} rows={3} placeholder="Откуда рецепт, что можно изменить" /></label>
         <Button size="lg" onClick={() => void saveCurrent()} disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : <Save />} {currentIndex < pages.length - 1 ? "Сохранить и перейти дальше" : "Сохранить рецепт"}</Button>
       </div>
     </div>

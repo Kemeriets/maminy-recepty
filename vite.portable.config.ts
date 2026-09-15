@@ -5,7 +5,7 @@ import { writeFileSync } from "node:fs";
 import { APP_CONFIG } from "./config/app.config";
 
 const projectRoot = fileURLToPath(new URL(".", import.meta.url));
-const description = "Тёплая семейная книга рецептов, которая всегда под рукой.";
+const description = "Рецепты, фотографии и удобный режим готовки.";
 
 function portableMetadata() {
   return {
