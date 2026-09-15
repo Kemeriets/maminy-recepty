@@ -25,7 +25,7 @@ interface SettingsPageProps {
 }
 
 export function SettingsPage({ snapshot, onNavigateImport, onNavigateTrash, onPerform, onInstall }: SettingsPageProps) {
-  const { cloudProvider, cloudReady, cloudConnected, pendingCount, syncState, connectCloud, disconnectCloud, refresh } = useBook();
+  const { cloudProvider, cloudReady, cloudConnected, pendingCount, syncState, syncIssue, connectCloud, disconnectCloud, refresh } = useBook();
   const [zipLoading, setZipLoading] = useState(false);
   const [cloudBusy, setCloudBusy] = useState(false);
   const deletedCount = snapshot.recipes.filter((recipe) => recipe.deletedAt).length;
@@ -44,7 +44,7 @@ export function SettingsPage({ snapshot, onNavigateImport, onNavigateTrash, onPe
     setCloudBusy(true);
     try {
       if (await refresh()) toast.success("Рецепты синхронизированы");
-      else toast.error("Не удалось выполнить синхронизацию", { description: "Изменения остались на устройстве. Проверьте интернет и повторите попытку." });
+      else toast.error("Синхронизация не завершена", { description: "Причина показана в настройках ниже. Изменения остались на устройстве." });
     } catch { toast.error("Не удалось выполнить синхронизацию"); }
     finally { setCloudBusy(false); }
   };
@@ -66,15 +66,16 @@ export function SettingsPage({ snapshot, onNavigateImport, onNavigateTrash, onPe
               <small>Для первого подключения владелец сайта один раз создаёт приложение в Яндексе. Это не требует собственного сервера.</small>
               <YandexSetup onConnect={connectCloud} />
             </> : cloudConnected ? <>
-              <p>Подключён Яндекс Диск. Копии рецептов и фотографий хранятся в отдельной приватной папке приложения. На другом устройстве откройте этот сайт и войдите в тот же аккаунт Яндекса.</p>
+              <p>{syncState === "synced" ? "Рецепты синхронизированы с приватной папкой приложения на Яндекс Диске." : "Вход через Яндекс выполнен. Неотправленные изменения остаются на устройстве до успешной синхронизации."} На другом устройстве откройте этот сайт и войдите в тот же аккаунт Яндекса.</p>
               <div className="settings-actions"><Button onClick={() => void syncCloud()} disabled={cloudBusy}>{cloudBusy ? <Loader2 className="animate-spin" /> : <RefreshCw />} Синхронизировать</Button>
                 <AlertDialog><AlertDialogTrigger asChild><Button variant="outline" disabled={cloudBusy}>Отключить</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Отключить синхронизацию?</AlertDialogTitle><AlertDialogDescription>Рецепты на устройстве и Яндекс Диске останутся. Новые изменения не будут передаваться между устройствами до повторного подключения.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Отмена</AlertDialogCancel><AlertDialogAction onClick={() => void disconnect()}>Отключить</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
-              </div><small role="status">{syncState === "error" ? "Есть ошибка соединения. Повторите синхронизацию." : syncState === "offline" ? "Нет интернета. Отправка продолжится после подключения." : pendingCount ? `Изменений в очереди: ${pendingCount}` : "Нет изменений в очереди отправки"}</small>
+              </div><small role="status">{syncState === "error" ? `Синхронизация не завершена. Изменений в очереди: ${pendingCount}` : syncState === "offline" ? "Нет интернета. Отправка продолжится после подключения." : pendingCount ? `Изменений в очереди: ${pendingCount}` : "Нет изменений в очереди отправки"}</small>
             </> : <>
               <p>Рецепты пока только на этом устройстве. Подключите Яндекс Диск для синхронизации телефона и компьютера. На всех устройствах используйте один и тот же аккаунт: локальные изменения будут добавлены к его данным.</p>
               <Button onClick={connectCloud}><Cloud /> Подключить Яндекс Диск</Button>
               <small>Приложение запрашивает доступ только к своей папке. Пароль вы вводите на странице Яндекса, не на этом сайте.</small>
             </> : <p>{cloudConnected ? "Рецепты синхронизируются с подключённым хранилищем." : "Рецепты и фотографии хранятся только в этом браузере. Для переноса на другое устройство скачайте полную копию."}</p>}
+            {syncState === "error" && syncIssue && <div className="settings-sync-error" role="alert"><strong>{syncIssue.message}</strong><p>{syncIssue.help}</p>{syncIssue.diagnostic && <small>Код ошибки: <code>{syncIssue.diagnostic}</code></small>}{cloudProvider === "yandex-disk" && (syncIssue.kind === "auth" || syncIssue.kind === "permission") && <Button variant="outline" onClick={connectCloud} disabled={cloudBusy}><RefreshCw /> Войти через Яндекс заново</Button>}</div>}
           </div>
         </section>
         <StorageInfo cloudConnected={cloudConnected} />

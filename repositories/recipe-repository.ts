@@ -47,6 +47,7 @@ export interface RecipeRepository {
   consumeLogin(): Promise<boolean>;
   connectCloud(): void;
   disconnectCloud(): Promise<void>;
+  getLastSyncError(): unknown;
 }
 
 function replaceImage(recipe: Recipe, localId: string, remote: RecipeImage): Recipe {
@@ -120,6 +121,8 @@ async function fetchYandexSnapshot(): Promise<BookSnapshot> {
 }
 
 export class HybridRecipeRepository implements RecipeRepository {
+  private lastSyncError: unknown = null;
+  getLastSyncError(): unknown { return this.lastSyncError; }
   provider(): "sites" | "yandex-disk" | "local" { return getRuntimeConfig().provider; }
   cloudReady(): boolean { return this.provider() === "sites" || (this.provider() === "yandex-disk" && isYandexReady()); }
   async cloudConnected(): Promise<boolean> { return this.provider() === "sites" ? true : this.provider() === "yandex-disk" ? isYandexConnected() : false; }
@@ -131,6 +134,7 @@ export class HybridRecipeRepository implements RecipeRepository {
   async disconnectCloud(): Promise<void> { if (this.provider() === "yandex-disk") await disconnectYandex(); }
 
   async load(): Promise<RepositoryLoadResult> {
+    this.lastSyncError = null;
     const local = await getLocalSnapshot().catch(() => null);
     if (local) {
       return { snapshot: local, remote: false };
@@ -144,7 +148,8 @@ export class HybridRecipeRepository implements RecipeRepository {
       const remote = this.provider() === "yandex-disk" ? await fetchYandexSnapshot() : await fetchSnapshot();
       await setLocalSnapshot(remote);
       return { snapshot: remote, remote: true };
-    } catch {
+    } catch (error) {
+      this.lastSyncError = error;
       const demo = createDemoSnapshot();
       await setLocalSnapshot(demo).catch(() => undefined);
       return { snapshot: demo, remote: false };
@@ -152,6 +157,7 @@ export class HybridRecipeRepository implements RecipeRepository {
   }
 
   async refresh(): Promise<BookSnapshot | null> {
+    this.lastSyncError = null;
     if (this.provider() === "local" || (this.provider() === "yandex-disk" && !(await isYandexConnected()))) return null;
     try {
       const snapshot = this.provider() === "yandex-disk" ? await fetchYandexSnapshot() : await fetchSnapshot();
@@ -159,12 +165,14 @@ export class HybridRecipeRepository implements RecipeRepository {
       const merged = queued.reduce(applyOperation, snapshot);
       await setLocalSnapshot(merged);
       return merged;
-    } catch {
+    } catch (error) {
+      this.lastSyncError = error;
       return null;
     }
   }
 
   async persist(snapshot: BookSnapshot, operation: BookOperation): Promise<boolean> {
+    this.lastSyncError = null;
     await saveSnapshotAndOperations(snapshot, [operation]);
     if (this.provider() === "local" || (this.provider() === "yandex-disk" && !(await isYandexConnected()))) return false;
     try {
@@ -177,12 +185,14 @@ export class HybridRecipeRepository implements RecipeRepository {
       } else await sendOperations([operation]);
       await removeQueuedOperation(operation.opId);
       return true;
-    } catch {
+    } catch (error) {
+      this.lastSyncError = error;
       return false;
     }
   }
 
   async persistMany(snapshot: BookSnapshot, operations: BookOperation[]): Promise<boolean> {
+    this.lastSyncError = null;
     await saveSnapshotAndOperations(snapshot, operations);
     if (this.provider() === "local" || (this.provider() === "yandex-disk" && !(await isYandexConnected()))) return false;
     try {
@@ -200,12 +210,14 @@ export class HybridRecipeRepository implements RecipeRepository {
         await Promise.all(operations.map((operation) => removeQueuedOperation(operation.opId)));
       }
       return true;
-    } catch {
+    } catch (error) {
+      this.lastSyncError = error;
       return false;
     }
   }
 
   async flush(snapshot: BookSnapshot): Promise<BookSnapshot> {
+    this.lastSyncError = null;
     const provider = this.provider();
     if (provider === "local" || (provider === "yandex-disk" && !(await isYandexConnected()))) {
       await setLocalSnapshot(snapshot);
@@ -230,9 +242,10 @@ export class HybridRecipeRepository implements RecipeRepository {
         }
         await saveSnapshotAndOperations(working, imageOperations);
         uploadedImageIds.push(pending.id);
-      } catch {
+      } catch (error) {
+        this.lastSyncError = error;
         await setLocalSnapshot(working);
-        throw new Error(provider === "yandex-disk" ? "Не удалось загрузить фотографию в Яндекс Диск" : "Не удалось загрузить фотографию");
+        throw new Error(provider === "yandex-disk" ? "Не удалось загрузить фотографию в Яндекс Диск" : "Не удалось загрузить фотографию", { cause: error });
       }
     }
 
@@ -245,10 +258,11 @@ export class HybridRecipeRepository implements RecipeRepository {
           await cacheRemoteOperation(normalized);
         } else await sendOperations([operation]);
         await removeQueuedOperation(operation.opId);
-      } catch {
+      } catch (error) {
+        this.lastSyncError = error;
         if (provider === "yandex-disk") {
           await setLocalSnapshot(working);
-          throw new Error("Не удалось синхронизировать книгу с Яндекс Диском");
+          throw new Error("Не удалось синхронизировать книгу с Яндекс Диском", { cause: error });
         }
         break;
       }
@@ -259,7 +273,7 @@ export class HybridRecipeRepository implements RecipeRepository {
       return remote;
     }
     await setLocalSnapshot(working);
-    if (provider === "yandex-disk") throw new Error("Не удалось получить изменения с Яндекс Диска. Локальные данные сохранены.");
+    if (provider === "yandex-disk") throw new Error("Не удалось получить изменения с Яндекс Диска. Локальные данные сохранены.", { cause: this.lastSyncError });
     return working;
   }
 }

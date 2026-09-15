@@ -2,6 +2,12 @@
 @import "tw-animate-css";
 @import "../vendor/shadcn-tailwind-4.13.0.css";
 
+/* Keep actionable cloud diagnostics visible without displacing the book. */
+.settings-sync-error { margin-top: 1rem; padding: 1rem; border: 1px solid #e4b8b8; border-radius: 1rem; background: #fff4f4; color: #64292f; overflow-wrap: anywhere; }
+.settings-sync-error p { margin: .5rem 0; }
+.settings-sync-error small { display: block; margin-bottom: .75rem; color: #64292f; }
+.settings-sync-error button { margin-top: .5rem; }
+
 :root {
   --background: #fffaf1; --foreground: #2d2522; --card: #ffffff; --card-foreground: #2d2522;
   --popover: #ffffff; --popover-foreground: #2d2522; --primary: #6c2737; --primary-foreground: #fffaf5;

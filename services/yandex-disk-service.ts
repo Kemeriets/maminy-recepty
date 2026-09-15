@@ -15,10 +15,12 @@ const OPERATIONS_DIR = "app:/operations";
 const IMAGES_DIR = "app:/images";
 const OAUTH_STATE_KEY = "maminy-recipes-yandex-oauth-state";
 const OAUTH_RETURN_KEY = "maminy-recipes-yandex-oauth-return";
+let folderSetup: { token: string; promise: Promise<void> } | null = null;
 
 export class YandexDiskError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(message: string, readonly status: number, readonly code?: string) {
     super(message);
+    this.name = "YandexDiskError";
   }
 }
 
@@ -36,12 +38,13 @@ async function diskRequest(path: string, init?: RequestInit): Promise<Response> 
   const token = await activeToken();
   const response = await fetchWithTimeout(`${DISK_API}${path}`, {
     ...init,
-    headers: { Accept: "application/json", Authorization: `OAuth ${token}`, ...init?.headers },
+    headers: { Accept: "application/json", "Content-Type": "application/json", Authorization: `OAuth ${token}`, ...init?.headers },
   });
   if (!response.ok) {
+    if (response.status === 401 || response.status === 404) folderSetup = null;
     if (response.status === 401) await clearCloudAuth();
-    const body = await response.json().catch(() => ({})) as { message?: string };
-    throw new YandexDiskError(body.message || "Яндекс Диск временно недоступен", response.status);
+    const body = await response.json().catch(() => ({})) as { message?: string; error?: string };
+    throw new YandexDiskError(body.message || "Яндекс Диск временно недоступен", response.status, body.error);
   }
   return response;
 }
@@ -57,12 +60,23 @@ async function ensureDirectory(path: string): Promise<void> {
     await diskRequest(`/resources?${query({ path })}`, { method: "PUT" });
   } catch (error) {
     if (!(error instanceof YandexDiskError) || error.status !== 409) throw error;
+    // A conflicting file must not be mistaken for a usable directory.
+    const response = await diskRequest(`/resources?${query({ path, fields: "type" })}`);
+    const resource = await response.json() as { type?: string };
+    if (resource.type !== "dir") throw new YandexDiskError("Вместо папки книги на Диске находится файл", 409, "DiskExpectedDirectoryError");
   }
 }
 
 export async function ensureYandexBookFolders(): Promise<void> {
-  await ensureDirectory(OPERATIONS_DIR);
-  await ensureDirectory(IMAGES_DIR);
+  const token = await activeToken();
+  if (folderSetup?.token === token) return folderSetup.promise;
+  const setup = { token, promise: (async () => {
+    await ensureDirectory(OPERATIONS_DIR);
+    await ensureDirectory(IMAGES_DIR);
+  })() };
+  folderSetup = setup;
+  try { await setup.promise; }
+  catch (error) { if (folderSetup === setup) folderSetup = null; throw error; }
 }
 
 async function requestTransfer(kind: "upload" | "download", path: string): Promise<{ href: string; method?: string }> {
@@ -73,6 +87,8 @@ async function requestTransfer(kind: "upload" | "download", path: string): Promi
 }
 
 async function uploadBlob(path: string, blob: Blob): Promise<void> {
+  // The very first sync can contain queued recipes/photos before any cloud read.
+  await ensureYandexBookFolders();
   const transfer = await requestTransfer("upload", path);
   const response = await fetchWithTimeout(transfer.href, { method: transfer.method || "PUT", body: blob }, 45000);
   if (!response.ok) throw new YandexDiskError("Не удалось загрузить файл на Яндекс Диск", response.status);

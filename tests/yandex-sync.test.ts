@@ -45,6 +45,17 @@ describe("синхронизация с Яндекс Диском", () => {
     vi.mocked(listYandexOperationIds).mockRejectedValueOnce(new Error("Нет сети"));
     await expect(repository.flush(snapshot)).rejects.toThrow("Не удалось получить изменения");
     expect(await getLocalSnapshot()).toEqual(snapshot);
+    expect(repository.getLastSyncError()).toBeInstanceOf(Error);
+  });
+  it("сохраняет исходную причину отказа и не теряет накопленную очередь", async () => {
+    const snapshot = createDemoSnapshot(); const operation = customOperation();
+    const failure = new Error("API отказал");
+    await setLocalSnapshot(snapshot); await queueOperation(operation);
+    vi.mocked(uploadYandexOperation).mockRejectedValueOnce(failure);
+    await expect(repository.flush(snapshot)).rejects.toHaveProperty("cause", failure);
+    expect(repository.getLastSyncError()).toBe(failure);
+    expect(await listQueuedOperations()).toHaveLength(1);
+    expect(await getLocalSnapshot()).toEqual(snapshot);
   });
   it("не применяет историю другого аккаунта из локального кэша", async () => {
     await cacheRemoteOperation(customOperation());

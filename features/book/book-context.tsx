@@ -7,6 +7,7 @@ import { createDemoSnapshot } from "./demo-data";
 import { HybridRecipeRepository } from "../../repositories/recipe-repository";
 import { createId, nowIso } from "../../lib/ids";
 import { getLocalSnapshot, listQueuedOperations } from "../../services/local-store";
+import { describeSyncError, type SyncIssue } from "../../services/sync-error";
 import type { RuntimeProvider } from "../../services/runtime-config";
 import type { BookOperation, BookOperationInput, BookSnapshot } from "../../types/book";
 
@@ -17,6 +18,7 @@ interface BookContextValue {
   loading: boolean;
   syncState: SyncState;
   pendingCount: number;
+  syncIssue: SyncIssue | null;
   cloudProvider: RuntimeProvider;
   cloudReady: boolean;
   cloudConnected: boolean;
@@ -36,6 +38,7 @@ export function BookProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [syncState, setSyncState] = useState<SyncState>("loading");
   const [pendingCount, setPendingCount] = useState(0);
+  const [syncIssue, setSyncIssue] = useState<SyncIssue | null>(null);
   const cloudProvider = repository.provider();
   const cloudReady = repository.cloudReady();
   const [cloudConnected, setCloudConnected] = useState(cloudProvider === "sites");
@@ -59,22 +62,28 @@ export function BookProvider({ children }: { children: React.ReactNode }) {
       const local = await getLocalSnapshot(); if (local) updateSnapshot(local);
       setPendingCount((await listQueuedOperations().catch(() => [])).length);
       setSyncState("local");
+      setSyncIssue(null);
       return false;
     }
     if (!navigator.onLine) {
       setSyncState("offline");
+      setSyncIssue(null);
       return false;
     }
     setSyncState("syncing");
+    setSyncIssue(null);
     try {
       const next = await repository.flush((await getLocalSnapshot()) ?? snapshotRef.current);
       updateSnapshot(next);
       const queued = await listQueuedOperations().catch(() => []);
       setPendingCount(queued.length);
       setSyncState(queued.length ? "error" : "synced");
+      if (queued.length) setSyncIssue(describeSyncError(repository.getLastSyncError()));
       return queued.length === 0;
-    } catch {
+    } catch (error) {
       setPendingCount((await listQueuedOperations().catch(() => [])).length);
+      setCloudConnected(await repository.cloudConnected());
+      setSyncIssue(describeSyncError(error));
       setSyncState("error");
       return false;
     }
@@ -103,7 +112,9 @@ export function BookProvider({ children }: { children: React.ReactNode }) {
         if (!active) return;
         setLoading(false);
         setSyncState("error");
-        toast.error("Не удалось выполнить синхронизацию", { description: value instanceof Error ? value.message : "Рецепты доступны на этом устройстве. Проверьте интернет и подключение Яндекс Диска." });
+        const issue = describeSyncError(value);
+        setSyncIssue(issue);
+        toast.error(issue.message, { description: issue.help });
       }
     })();
     const online = () => void refresh();
@@ -132,6 +143,7 @@ export function BookProvider({ children }: { children: React.ReactNode }) {
     setCloudConnected(false);
     setPendingCount((await listQueuedOperations().catch(() => [])).length);
     setSyncState("local");
+    setSyncIssue(null);
   }, [repository]);
 
   const perform = useCallback((raw: BookOperationInput) => enqueue(async () => {
@@ -146,9 +158,12 @@ export function BookProvider({ children }: { children: React.ReactNode }) {
       const connected = await repository.cloudConnected();
       setCloudConnected(connected);
       setPendingCount((await listQueuedOperations().catch(() => [])).length);
-      setSyncState(!connected ? "local" : navigator.onLine ? "error" : "offline");
+      const error = repository.getLastSyncError();
+      setSyncIssue(error ? describeSyncError(error) : null);
+      setSyncState(error && navigator.onLine ? "error" : !connected ? "local" : navigator.onLine ? "error" : "offline");
       if (connected) toast("Изменение сохранено на устройстве", { description: "Отправим на Яндекс Диск, когда восстановится соединение." });
     } else {
+      setSyncIssue(null);
       const hasPendingImages = next.recipes.some((recipe) => recipe.coverImage?.url.startsWith("data:") || recipe.originalPageImages.some((image) => image.url.startsWith("data:")) || recipe.steps.some((step) => step.image?.url.startsWith("data:")));
       if (hasPendingImages) {
         setSyncState("syncing");
@@ -175,8 +190,11 @@ export function BookProvider({ children }: { children: React.ReactNode }) {
       const connected = await repository.cloudConnected();
       setCloudConnected(connected);
       setPendingCount((await listQueuedOperations().catch(() => [])).length);
-      setSyncState(!connected ? "local" : navigator.onLine ? "error" : "offline");
+      const error = repository.getLastSyncError();
+      setSyncIssue(error ? describeSyncError(error) : null);
+      setSyncState(error && navigator.onLine ? "error" : !connected ? "local" : navigator.onLine ? "error" : "offline");
     } else {
+      setSyncIssue(null);
       const hasPendingImages = next.recipes.some((recipe) => recipe.coverImage?.url.startsWith("data:") || recipe.originalPageImages.some((image) => image.url.startsWith("data:")));
       if (hasPendingImages) {
         setSyncState("syncing");
@@ -189,7 +207,7 @@ export function BookProvider({ children }: { children: React.ReactNode }) {
     }
   }), [enqueue, refresh, repository, updateSnapshot]);
 
-  const value = useMemo(() => ({ snapshot, loading, syncState, pendingCount, cloudProvider, cloudReady, cloudConnected, perform, performMany, refresh, connectCloud, disconnectCloud }), [snapshot, loading, syncState, pendingCount, cloudProvider, cloudReady, cloudConnected, perform, performMany, refresh, connectCloud, disconnectCloud]);
+  const value = useMemo(() => ({ snapshot, loading, syncState, syncIssue, pendingCount, cloudProvider, cloudReady, cloudConnected, perform, performMany, refresh, connectCloud, disconnectCloud }), [snapshot, loading, syncState, syncIssue, pendingCount, cloudProvider, cloudReady, cloudConnected, perform, performMany, refresh, connectCloud, disconnectCloud]);
   return <BookContext.Provider value={value}>{children}</BookContext.Provider>;
 }
 
