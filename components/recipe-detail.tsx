@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ArchiveRestore, BookOpenText, ChefHat, ChevronLeft, Clock3, Heart, Maximize2, Pencil, Share2, ShoppingBasket, Trash2 } from "lucide-react";
+import { ArchiveRestore, BookOpenText, ChefHat, ChevronLeft, Clock3, Heart, Pencil, Share2, ShoppingBasket, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "./ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -22,14 +22,14 @@ interface RecipeDetailProps {
   onFavorite: () => void;
   onDelete: () => void;
   onRestore?: () => void;
-  onAddShopping: (items: ShoppingItem[]) => void;
+  onAddShopping: (items: ShoppingItem[]) => Promise<void>;
 }
 
 export function RecipeDetail({ recipe, category, onBack, onEdit, onFavorite, onDelete, onRestore, onAddShopping }: RecipeDetailProps) {
   const [servings, setServings] = useState(recipe.servings || 1);
-  const [originalIndex, setOriginalIndex] = useState<number | null>(null);
   const [cooking, setCooking] = useState(false);
   const [shoppingOpen, setShoppingOpen] = useState(false);
+  const [shoppingBusy, setShoppingBusy] = useState(false);
   const [selectedIngredients, setSelectedIngredients] = useState<Set<string>>(() => new Set(recipe.ingredients.map((item) => item.id)));
   const minutes = totalRecipeMinutes(recipe);
   const scaledIngredients = useMemo(() => recipe.ingredients.map((item) => scaleIngredient(item, recipe.servings, servings)), [recipe, servings]);
@@ -44,16 +44,19 @@ export function RecipeDetail({ recipe, category, onBack, onEdit, onFavorite, onD
     }
   };
 
-  const addSelectedToShopping = () => {
+  const addSelectedToShopping = async () => {
     const createdAt = nowIso();
     const chosen = scaledIngredients.filter((item) => selectedIngredients.has(item.id));
     if (!chosen.length) { toast.error("Выберите хотя бы один ингредиент"); return; }
-    onAddShopping(chosen.map((item): ShoppingItem => ({
+    setShoppingBusy(true);
+    try { await onAddShopping(chosen.map((item): ShoppingItem => ({
       id: createId("shop"), bookId: recipe.bookId, name: item.name, amount: item.amount,
       amountText: item.amountText, unit: item.unit, checked: false, recipeId: recipe.id, createdAt, updatedAt: createdAt,
     })));
     setShoppingOpen(false);
     toast.success("Добавлено в покупки", { description: `${chosen.length} ингредиентов` });
+    } catch { toast.error("Не удалось добавить продукты", { description: "Выбор остался. Попробуйте ещё раз." }); }
+    finally { setShoppingBusy(false); }
   };
 
   if (recipe.deletedAt) {
@@ -132,25 +135,9 @@ export function RecipeDetail({ recipe, category, onBack, onEdit, onFavorite, onD
         {recipe.familyStory ? <section className="family-story"><h2>Источник или комментарий</h2><p>{recipe.familyStory}</p></section> : null}
       </div>}
 
-      {recipe.originalPageImages.length > 0 && (
-        <section className="original-pages">
-          <h2>Оригинал из старой книги</h2>
-          <div className="original-pages__grid">
-            {recipe.originalPageImages.map((image, index) => <button type="button" key={image.id} onClick={() => setOriginalIndex(index)}><img src={image.thumbnailUrl || image.url} alt={image.alt || `Страница ${index + 1}`} loading="lazy" /><span><Maximize2 /> Открыть и увеличить</span></button>)}
-          </div>
-        </section>
-      )}
-
       {recipe.tags.length > 0 && <div className="tag-list">{recipe.tags.map((tag) => <span key={tag}>#{tag}</span>)}</div>}
       <div className="danger-zone"><Button variant="ghost" onClick={onEdit}><Pencil /> Редактировать</Button><AlertDialog><AlertDialogTrigger asChild><Button variant="ghost" className="text-destructive"><Trash2 /> Удалить</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Переместить рецепт в корзину?</AlertDialogTitle><AlertDialogDescription>«{recipe.title}» можно будет восстановить в настройках. Фотографии пока не удалятся.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Оставить</AlertDialogCancel><AlertDialogAction variant="destructive" onClick={onDelete}>Переместить</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></div>
 
-      <Dialog open={originalIndex !== null} onOpenChange={(open) => { if (!open) setOriginalIndex(null); }}>
-        <DialogContent className="image-viewer max-w-[96vw] bg-[#16110f] p-2" showCloseButton>
-          <DialogTitle className="sr-only">Оригинал страницы</DialogTitle>
-          <DialogDescription className="sr-only">Фотографию можно увеличить жестом браузера</DialogDescription>
-          {originalIndex !== null ? <img src={recipe.originalPageImages[originalIndex]?.url} alt={recipe.originalPageImages[originalIndex]?.alt || "Оригинал рецепта"} /> : null}
-        </DialogContent>
-      </Dialog>
       <Dialog open={shoppingOpen} onOpenChange={setShoppingOpen}>
         <DialogContent className="shopping-picker">
           <DialogTitle>Что добавить в покупки?</DialogTitle>
@@ -158,7 +145,7 @@ export function RecipeDetail({ recipe, category, onBack, onEdit, onFavorite, onD
           <div className="shopping-picker__list">
             {scaledIngredients.map((item) => <label key={item.id}><Checkbox checked={selectedIngredients.has(item.id)} onCheckedChange={(checked) => setSelectedIngredients((current) => { const next = new Set(current); if (checked) next.add(item.id); else next.delete(item.id); return next; })} /><span>{item.name}</span><strong>{[formatAmount(item.amount, item.amountText), item.unit].filter(Boolean).join(" ") || "по вкусу"}</strong></label>)}
           </div>
-          <Button size="lg" onClick={addSelectedToShopping} disabled={!selectedIngredients.size}><ShoppingBasket /> Добавить выбранное ({selectedIngredients.size})</Button>
+          <Button size="lg" onClick={() => void addSelectedToShopping()} disabled={shoppingBusy || !selectedIngredients.size}><ShoppingBasket /> {shoppingBusy ? "Сохраняем…" : `Добавить выбранное (${selectedIngredients.size})`}</Button>
         </DialogContent>
       </Dialog>
       <CookingMode recipe={recipe} open={cooking} onOpenChange={setCooking} />

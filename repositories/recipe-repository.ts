@@ -8,14 +8,13 @@ import {
   listPendingImages,
   listQueuedOperations,
   listRemoteOperations,
-  queueOperation,
   removePendingImage,
   removeQueuedOperation,
   setLocalSnapshot,
   saveSnapshotAndOperations,
 } from "../services/local-store";
 import { uploadPendingImage } from "../services/image-service";
-import { getRuntimeConfig } from "../services/runtime-config";
+import { getRuntimeConfig, runtimeAssetUrl } from "../services/runtime-config";
 import {
   beginYandexLogin,
   consumeYandexOAuthCallback,
@@ -79,6 +78,12 @@ async function sendOperations(operations: BookOperation[]): Promise<void> {
 
 function normalizeYandexImage(image: RecipeImage | null | undefined): RecipeImage | null {
   if (!image) return null;
+  const demoPath = image.url.match(/(?:^|\/)demo\/([^?#]+)$/);
+  if (demoPath) {
+    const thumbnail = image.thumbnailUrl?.match(/(?:^|\/)demo\/([^?#]+)$/);
+    return { ...image, url: runtimeAssetUrl(`demo/${demoPath[1]}`), thumbnailUrl: thumbnail ? runtimeAssetUrl(`demo/${thumbnail[1]}`) : null };
+  }
+  if (!image.url.startsWith("data:") && !image.url.includes("/__images/")) return image;
   return { ...image, url: yandexImageUrl(image.id), thumbnailUrl: yandexImageUrl(image.id, "thumbnail") };
 }
 
@@ -98,12 +103,17 @@ function normalizeYandexOperation(operation: BookOperation): BookOperation {
 async function fetchYandexSnapshot(): Promise<BookSnapshot> {
   await ensureYandexBookFolders();
   const ids = await listYandexOperationIds();
-  for (const id of ids) {
-    if (await hasRemoteOperation(id)) continue;
+  // Fetch new immutable operation files in small batches, not one long chain.
+  for (let offset = 0; offset < ids.length; offset += 4) {
+    await Promise.all(ids.slice(offset, offset + 4).map(async (id) => {
+    if (await hasRemoteOperation(id)) return;
     const operation = normalizeYandexOperation(await downloadYandexOperation(id));
     await cacheRemoteOperation(operation);
+    }));
   }
-  const operations = (await listRemoteOperations()).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.opId.localeCompare(b.opId));
+  const currentIds = new Set(ids);
+  // A different account must never inherit the previous account's operation cache.
+  const operations = (await listRemoteOperations()).filter((operation) => currentIds.has(operation.opId)).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.opId.localeCompare(b.opId));
   let snapshot = createDemoSnapshot("yandex-family");
   for (const operation of operations) snapshot = applyOperation(snapshot, operation);
   return { ...snapshot, syncedAt: nowIso() };
@@ -145,8 +155,10 @@ export class HybridRecipeRepository implements RecipeRepository {
     if (this.provider() === "local" || (this.provider() === "yandex-disk" && !(await isYandexConnected()))) return null;
     try {
       const snapshot = this.provider() === "yandex-disk" ? await fetchYandexSnapshot() : await fetchSnapshot();
-      await setLocalSnapshot(snapshot);
-      return snapshot;
+      const queued = await listQueuedOperations();
+      const merged = queued.reduce(applyOperation, snapshot);
+      await setLocalSnapshot(merged);
+      return merged;
     } catch {
       return null;
     }
@@ -201,18 +213,23 @@ export class HybridRecipeRepository implements RecipeRepository {
     }
     let working = snapshot;
     const pendingImages = await listPendingImages().catch(() => []);
+    const uploadedImageIds: string[] = [];
+    const referencedImages = new Set(working.recipes.flatMap((recipe) => [recipe.coverImage, ...recipe.originalPageImages, ...recipe.steps.map((step) => step.image)].filter(Boolean).map((image) => image!.id)));
     for (const pending of pendingImages) {
+      if (!referencedImages.has(pending.id)) continue; // Unsaved drafts stay private and local.
       try {
         const remoteImage = provider === "yandex-disk" ? await uploadYandexImage(pending) : await uploadPendingImage(pending);
         const changedRecipes = working.recipes.map((recipe) => replaceImage(recipe, pending.id, remoteImage));
         const updates = changedRecipes.filter((recipe, index) => recipe !== working.recipes[index]);
         working = { ...working, recipes: changedRecipes };
+        const imageOperations: BookOperation[] = [];
         for (const recipe of updates) {
           const operation: BookOperation = { opId: createId("op"), type: "recipe.upsert", recipe, createdAt: nowIso() };
           working = applyOperation(working, operation);
-          await queueOperation(operation);
+          imageOperations.push(operation);
         }
-        await removePendingImage(pending.id);
+        await saveSnapshotAndOperations(working, imageOperations);
+        uploadedImageIds.push(pending.id);
       } catch {
         await setLocalSnapshot(working);
         throw new Error(provider === "yandex-disk" ? "Не удалось загрузить фотографию в Яндекс Диск" : "Не удалось загрузить фотографию");
@@ -237,8 +254,12 @@ export class HybridRecipeRepository implements RecipeRepository {
       }
     }
     const remote = await this.refresh();
-    if (remote) return remote;
+    if (remote) {
+      await Promise.all(uploadedImageIds.map(removePendingImage));
+      return remote;
+    }
     await setLocalSnapshot(working);
+    if (provider === "yandex-disk") throw new Error("Не удалось получить изменения с Яндекс Диска. Локальные данные сохранены.");
     return working;
   }
 }

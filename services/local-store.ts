@@ -2,6 +2,7 @@ import type { BookOperation, BookSnapshot, RecipeImageKind } from "../types/book
 
 const DB_NAME = "maminy-recipes";
 const DB_VERSION = 2;
+export const IMAGE_CACHE_LIMIT_BYTES = 24 * 1024 * 1024;
 
 export interface PendingImage {
   id: string;
@@ -133,6 +134,27 @@ export async function clearCloudAuth(): Promise<void> {
 export async function cacheImageBlob(id: string, variant: "main" | "thumbnail", blob: Blob): Promise<void> {
   const value: CachedImage = { key: `${id}:${variant}`, blob, updatedAt: new Date().toISOString() };
   await transaction<IDBValidKey>("imageCache", "readwrite", (store) => store.put(value));
+  await pruneImageCache();
+}
+
+export async function pruneImageCache(limit = IMAGE_CACHE_LIMIT_BYTES): Promise<void> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("imageCache", "readwrite");
+    const store = tx.objectStore("imageCache");
+    const request = store.getAll();
+    request.onsuccess = () => {
+      const entries = (request.result as CachedImage[]).sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+      let total = entries.reduce((sum, entry) => sum + entry.blob.size, 0);
+      for (const entry of entries) { if (total <= limit) break; store.delete(entry.key); total -= entry.blob.size; }
+    };
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = tx.onabort = () => { db.close(); reject(tx.error); };
+  });
+}
+
+export async function clearCachedImages(): Promise<void> {
+  await transaction<undefined>("imageCache", "readwrite", (store) => store.clear());
 }
 
 export async function getCachedImageBlob(id: string, variant: "main" | "thumbnail"): Promise<Blob | null> {

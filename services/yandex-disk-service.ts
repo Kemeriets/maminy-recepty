@@ -8,6 +8,7 @@ import {
   type PendingImage,
 } from "./local-store";
 import { getRuntimeConfig, runtimeAssetUrl } from "./runtime-config";
+import { fetchWithTimeout } from "./http";
 
 const DISK_API = "https://cloud-api.yandex.net/v1/disk";
 const OPERATIONS_DIR = "app:/operations";
@@ -33,7 +34,7 @@ async function activeToken(): Promise<string> {
 
 async function diskRequest(path: string, init?: RequestInit): Promise<Response> {
   const token = await activeToken();
-  const response = await fetch(`${DISK_API}${path}`, {
+  const response = await fetchWithTimeout(`${DISK_API}${path}`, {
     ...init,
     headers: { Accept: "application/json", Authorization: `OAuth ${token}`, ...init?.headers },
   });
@@ -73,13 +74,13 @@ async function requestTransfer(kind: "upload" | "download", path: string): Promi
 
 async function uploadBlob(path: string, blob: Blob): Promise<void> {
   const transfer = await requestTransfer("upload", path);
-  const response = await fetch(transfer.href, { method: transfer.method || "PUT", body: blob });
+  const response = await fetchWithTimeout(transfer.href, { method: transfer.method || "PUT", body: blob }, 45000);
   if (!response.ok) throw new YandexDiskError("Не удалось загрузить файл на Яндекс Диск", response.status);
 }
 
 async function downloadJson(path: string): Promise<unknown> {
   const transfer = await requestTransfer("download", path);
-  const response = await fetch(transfer.href, { cache: "no-store" });
+  const response = await fetchWithTimeout(transfer.href, { cache: "no-store" });
   if (!response.ok) throw new YandexDiskError("Не удалось прочитать файл с Яндекс Диска", response.status);
   return response.json();
 }
@@ -156,15 +157,15 @@ export async function consumeYandexOAuthCallback(): Promise<boolean> {
   const returnedState = params.get("state");
   const expectedState = sessionStorage.getItem(OAUTH_STATE_KEY);
   const returnHash = sessionStorage.getItem(OAUTH_RETURN_KEY) || "#settings";
+  // Remove the credential from the address immediately, even if local storage fails.
+  history.replaceState({}, "", `${location.pathname}${location.search}${returnHash}`);
+  sessionStorage.removeItem(OAUTH_STATE_KEY);
+  sessionStorage.removeItem(OAUTH_RETURN_KEY);
   if (!token || !returnedState || !expectedState || returnedState !== expectedState) {
-    history.replaceState({}, "", `${location.pathname}${location.search}${returnHash}`);
     throw new Error(oauthError || "Не удалось безопасно завершить вход в Яндекс Диск");
   }
   const expiresIn = Number(params.get("expires_in"));
   await setCloudAuth({ accessToken: token, expiresAt: Number.isFinite(expiresIn) && expiresIn > 0 ? Date.now() + expiresIn * 1000 : null });
-  sessionStorage.removeItem(OAUTH_STATE_KEY);
-  sessionStorage.removeItem(OAUTH_RETURN_KEY);
-  history.replaceState({}, "", `${location.pathname}${location.search}${returnHash}`);
   window.dispatchEvent(new HashChangeEvent("hashchange"));
   return true;
 }
@@ -181,6 +182,7 @@ export function beginYandexLogin(): void {
   url.searchParams.set("client_id", clientId);
   url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("state", state);
+  url.searchParams.set("scope", "cloud_api:disk.app_folder");
   url.searchParams.set("force_confirm", "yes");
   location.assign(url.toString());
 }

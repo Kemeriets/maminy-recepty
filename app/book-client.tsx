@@ -1,7 +1,7 @@
 "use client";
 
 import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
-import { ArchiveRestore, BookOpen, ChefHat, ChevronRight, Cloud, CloudOff, Heart, Home, Menu, Plus, Search, Settings, ShoppingBasket, SlidersHorizontal, Sparkles, Trash2, UtensilsCrossed, WifiOff, X } from "lucide-react";
+import { ArchiveRestore, BookOpen, ChefHat, ChevronRight, Cloud, CloudOff, Dices, Heart, Menu, Plus, Search, Settings, ShoppingBasket, SlidersHorizontal, Sparkles, Trash2, UtensilsCrossed, WifiOff, X } from "lucide-react";
 import { toast } from "sonner";
 import { APP_CONFIG } from "../config/app.config";
 import { BookProvider, useBook, type SyncState } from "../features/book/book-context";
@@ -15,7 +15,7 @@ import { ShoppingList } from "../components/shopping-list";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "../components/ui/sheet";
+import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
 import { Skeleton } from "../components/ui/skeleton";
 import { Toaster } from "../components/ui/sonner";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "../components/ui/alert-dialog";
@@ -24,8 +24,9 @@ import { isPortableRuntime, runtimeAssetUrl } from "../services/runtime-config";
 const RecipeForm = lazy(() => import("../components/recipe-form").then((module) => ({ default: module.RecipeForm })));
 const ImportCenter = lazy(() => import("../components/import-center").then((module) => ({ default: module.ImportCenter })));
 const SettingsPage = lazy(() => import("../components/settings-page").then((module) => ({ default: module.SettingsPage })));
+const RandomRecipePage = lazy(() => import("../components/random-recipe-page").then((module) => ({ default: module.RandomRecipePage })));
 
-export type InitialView = "home" | "catalog" | "shopping" | "settings" | "import" | "trash";
+export type InitialView = "home" | "catalog" | "random" | "shopping" | "settings" | "import" | "trash";
 
 interface InstallPromptEvent extends Event {
   prompt(): Promise<void>;
@@ -47,6 +48,7 @@ function BookExperience({ initialView, initialRecipeId }: { initialView: Initial
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [favoriteOnly, setFavoriteOnly] = useState(false);
   const [withPhoto, setWithPhoto] = useState<boolean | null>(null);
+  const [randomSelection, setRandomSelection] = useState<{ categoryId: string | null; recipeId: string | null }>({ categoryId: null, recipeId: null });
   const [showIntro, setShowIntro] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
   const [updateReady, setUpdateReady] = useState<ServiceWorkerRegistration | null>(null);
@@ -96,7 +98,7 @@ function BookExperience({ initialView, initialRecipeId }: { initialView: Initial
       const recipeMatch = path.match(/^recipe\/([^/]+)/);
       if (recipeMatch) { setSelectedRecipeId(decodeURIComponent(recipeMatch[1])); setEditingRecipe(undefined); return; }
       setSelectedRecipeId(null); setEditingRecipe(undefined);
-      if (["home", "catalog", "shopping", "settings", "import", "trash"].includes(path)) setView(path as InitialView);
+      if (["home", "catalog", "random", "shopping", "settings", "import", "trash"].includes(path)) setView(path as InitialView);
       else setView("catalog");
     };
     readRoute();
@@ -166,9 +168,11 @@ function BookExperience({ initialView, initialRecipeId }: { initialView: Initial
   if (editingRecipe !== undefined) {
     content = <RecipeForm key={editingRecipe?.id ?? "new"} recipe={editingRecipe} bookId={snapshot.book.id} categories={snapshot.categories} onSave={saveRecipe} onDirtyChange={onEditorDirtyChange} onCancel={() => { editorDirty.current = false; setEditingRecipe(undefined); }} />;
   } else if (selectedRecipe) {
-    content = <RecipeDetail key={selectedRecipe.id} recipe={selectedRecipe} category={selectedCategory} onBack={closeRecipe} onEdit={() => setEditingRecipe(selectedRecipe)} onFavorite={() => void performSafely({ type: "recipe.favorite", recipeId: selectedRecipe.id, favorite: !selectedRecipe.favorite })} onDelete={() => { void perform({ type: "recipe.delete", recipeId: selectedRecipe.id, deletedAt: nowIso() }).then(() => { closeRecipe(); toast.success("Рецепт перемещён в корзину"); }).catch(() => toast.error("Не удалось удалить рецепт")); }} onRestore={() => void performSafely({ type: "recipe.restore", recipeId: selectedRecipe.id })} onAddShopping={(items) => void addShopping(items)} />;
+    content = <RecipeDetail key={selectedRecipe.id} recipe={selectedRecipe} category={selectedCategory} onBack={closeRecipe} onEdit={() => setEditingRecipe(selectedRecipe)} onFavorite={() => void performSafely({ type: "recipe.favorite", recipeId: selectedRecipe.id, favorite: !selectedRecipe.favorite })} onDelete={() => { void perform({ type: "recipe.delete", recipeId: selectedRecipe.id, deletedAt: nowIso() }).then(() => { closeRecipe(); toast.success("Рецепт перемещён в корзину"); }).catch(() => toast.error("Не удалось удалить рецепт")); }} onRestore={() => void performSafely({ type: "recipe.restore", recipeId: selectedRecipe.id })} onAddShopping={addShopping} />;
   } else if (view === "shopping") {
-    content = <ShoppingList bookId={snapshot.book.id} items={snapshot.shoppingItems} onUpsert={(item) => void performSafely({ type: "shopping.upsert", item })} onDelete={(itemId) => void performSafely({ type: "shopping.delete", itemId })} onClearChecked={() => void performSafely({ type: "shopping.clearChecked" })} />;
+    content = <ShoppingList bookId={snapshot.book.id} items={snapshot.shoppingItems} onUpsert={(item) => perform({ type: "shopping.upsert", item })} onDelete={(itemId) => perform({ type: "shopping.delete", itemId })} onClearChecked={() => performMany(snapshot.shoppingItems.filter((item) => item.checked).map((item) => ({ type: "shopping.delete", itemId: item.id })))} onClearAll={() => performMany(snapshot.shoppingItems.map((item) => ({ type: "shopping.delete", itemId: item.id })))} />;
+  } else if (view === "random") {
+    content = <RandomRecipePage recipes={snapshot.recipes} categories={snapshot.categories} selection={randomSelection} onSelectionChange={setRandomSelection} onOpen={openRecipe} onFavorite={(recipe) => void performSafely({ type: "recipe.favorite", recipeId: recipe.id, favorite: !recipe.favorite })} />;
   } else if (view === "import") {
     content = <ImportCenter snapshot={snapshot} onBack={() => navigate("settings")} onImport={performMany} />;
   } else if (view === "settings") {
@@ -228,11 +232,11 @@ function LibraryView({ snapshot, loading, mode, query, deferredQuery, categoryId
     </> : <>
       <div className="catalog-heading">
         <div><h2>{favoriteOnly ? "Любимые рецепты" : categoryId ? snapshot.categories.find((item) => item.id === categoryId)?.name : "Все рецепты"}</h2><p>{filtered.length} {pluralRecipes(filtered.length)}</p></div>
-        <Sheet><SheetTrigger asChild><Button variant={hasFilters ? "default" : "outline"}><SlidersHorizontal /> Фильтры{hasFilters ? " · есть" : ""}</Button></SheetTrigger><SheetContent side="right" className="filter-sheet w-[92vw] sm:max-w-md"><SheetHeader><SheetTitle>Фильтры</SheetTitle><SheetDescription>Оставьте только подходящие рецепты.</SheetDescription></SheetHeader><div className="filter-fields">
+        <RecipeFiltersPopover hasFilters={hasFilters} count={filtered.length}>
           <label className="field"><span>Категория</span><Select value={categoryId ?? "all"} onValueChange={(value) => onCategory(value === "all" ? null : value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Все категории</SelectItem>{snapshot.categories.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></label>
           <label className="field"><span>Фотография</span><Select value={withPhoto === null ? "all" : withPhoto ? "yes" : "no"} onValueChange={(value) => onWithPhoto(value === "all" ? null : value === "yes")}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Не важно</SelectItem><SelectItem value="yes">Только с фотографией</SelectItem><SelectItem value="no">Только без фотографии</SelectItem></SelectContent></Select></label>
           <button className={`toggle-filter ${favoriteOnly ? "is-active" : ""}`} type="button" aria-pressed={favoriteOnly} onClick={() => onFavoriteOnly(!favoriteOnly)}><Heart fill={favoriteOnly ? "currentColor" : "none"} /> Только любимые</button><Button variant="outline" onClick={resetFilters}>Сбросить фильтры</Button>
-        </div></SheetContent></Sheet>
+        </RecipeFiltersPopover>
       </div>
       {loading ? <CardSkeletons /> : filtered.length ? <><div className="recipe-grid">{filtered.slice(0, visibleCount).map(card)}</div>{filtered.length > visibleCount && <div className="load-more"><Button variant="outline" size="lg" onClick={() => setPagination({ key: filterKey, count: visibleCount + 24 })}>Показать ещё {Math.min(24, filtered.length - visibleCount)}</Button></div>}</> : <div className="empty-state"><div>{favoriteOnly ? <Heart /> : <Search />}</div><h2>{query ? "Ничего не нашли" : favoriteOnly ? "Пока нет любимых рецептов" : categoryId ? "В этой категории пока пусто" : "Здесь пока нет рецептов"}</h2><p>{query ? "Попробуйте другое название или ингредиент. Фильтры тоже влияют на поиск." : favoriteOnly ? "Нажмите сердечко на рецепте — он появится здесь." : categoryId ? "Выберите другую категорию или добавьте новый рецепт." : "Нажмите «Добавить рецепт», чтобы сохранить первый."}</p>{hasFilters && <Button variant="outline" onClick={resetFilters}>Сбросить фильтры</Button>}</div>}
     </>}
@@ -249,11 +253,16 @@ function TrashView({ snapshot, onBack, onOpen, onPerform }: { snapshot: ReturnTy
 }
 
 function DesktopSidebar({ view, onNavigate, shoppingCount }: { view: InitialView; onNavigate: (view: InitialView) => void; shoppingCount: number }) {
-  return <aside className="desktop-sidebar"><div className="brand-mark"><BookOpen /><span><strong>{APP_CONFIG.appName}</strong></span></div><nav aria-label="Основная навигация"><NavButton active={view === "home"} icon={<Home />} label="Главная" onClick={() => onNavigate("home")} /><NavButton active={view === "catalog"} icon={<BookOpen />} label="Все рецепты" onClick={() => onNavigate("catalog")} /><NavButton active={view === "shopping"} icon={<ShoppingBasket />} label="Покупки" badge={shoppingCount} onClick={() => onNavigate("shopping")} /><NavButton active={view === "settings" || view === "import" || view === "trash"} icon={<Settings />} label="Настройки" onClick={() => onNavigate("settings")} /></nav></aside>;
+  return <aside className="desktop-sidebar"><div className="brand-mark"><BookOpen /><span><strong>{APP_CONFIG.appName}</strong></span></div><nav aria-label="Основная навигация"><NavButton active={view === "catalog" || view === "home"} icon={<BookOpen />} label="Все рецепты" onClick={() => onNavigate("catalog")} /><NavButton active={view === "random"} icon={<Dices />} label="Что приготовить?" onClick={() => onNavigate("random")} /><NavButton active={view === "shopping"} icon={<ShoppingBasket />} label="Покупки" badge={shoppingCount} onClick={() => onNavigate("shopping")} /><NavButton active={view === "settings" || view === "import" || view === "trash"} icon={<Settings />} label="Настройки" onClick={() => onNavigate("settings")} /></nav></aside>;
 }
 
 function MobileNavigation({ view, onNavigate, shoppingCount }: { view: InitialView; onNavigate: (view: InitialView) => void; shoppingCount: number }) {
-  return <nav className="mobile-nav" aria-label="Основная навигация"><NavButton active={view === "home"} icon={<Home />} label="Главная" onClick={() => onNavigate("home")} /><NavButton active={view === "catalog"} icon={<BookOpen />} label="Рецепты" onClick={() => onNavigate("catalog")} /><NavButton active={view === "shopping"} icon={<ShoppingBasket />} label="Покупки" badge={shoppingCount} onClick={() => onNavigate("shopping")} /><NavButton active={view === "settings" || view === "import" || view === "trash"} icon={<Settings />} label="Ещё" onClick={() => onNavigate("settings")} /></nav>;
+  return <nav className="mobile-nav" aria-label="Основная навигация"><NavButton active={view === "catalog" || view === "home"} icon={<BookOpen />} label="Рецепты" onClick={() => onNavigate("catalog")} /><NavButton active={view === "random"} icon={<Dices />} label="Случайное" onClick={() => onNavigate("random")} /><NavButton active={view === "shopping"} icon={<ShoppingBasket />} label="Покупки" badge={shoppingCount} onClick={() => onNavigate("shopping")} /><NavButton active={view === "settings" || view === "import" || view === "trash"} icon={<Settings />} label="Ещё" onClick={() => onNavigate("settings")} /></nav>;
+}
+
+function RecipeFiltersPopover({ hasFilters, count, children }: { hasFilters: boolean; count: number; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return <Popover open={open} onOpenChange={setOpen}><PopoverTrigger asChild><Button variant={hasFilters ? "default" : "outline"}><SlidersHorizontal /> Фильтры{hasFilters ? " · есть" : ""}</Button></PopoverTrigger><PopoverContent align="end" className="filter-popover" aria-label="Фильтры рецептов"><header><h3>Фильтры</h3><button type="button" onClick={() => setOpen(false)} aria-label="Закрыть фильтры"><X /></button></header><div className="filter-fields">{children}</div><Button className="w-full" onClick={() => setOpen(false)}>Показать рецепты ({count})</Button></PopoverContent></Popover>;
 }
 
 function NavButton({ active, icon, label, badge, onClick }: { active: boolean; icon: React.ReactNode; label: string; badge?: number; onClick: () => void }) {

@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto";
-import { beforeEach, describe, expect, it } from "vitest";
-import { cacheImageBlob, cacheRemoteOperation, clearCloudAuth, clearLocalBookData, getCachedImageBlob, getCloudAuth, getDraft, getLocalSnapshot, listQueuedOperations, listRemoteOperations, queueOperation, saveDraft, saveSnapshotAndOperations, setCloudAuth, setLocalSnapshot } from "../services/local-store";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cacheImageBlob, cacheRemoteOperation, clearCachedImages, clearCloudAuth, clearLocalBookData, getCachedImageBlob, getCloudAuth, getDraft, getLocalSnapshot, listPendingImages, listQueuedOperations, listRemoteOperations, pruneImageCache, queueOperation, saveDraft, savePendingImage, saveSnapshotAndOperations, setCloudAuth, setLocalSnapshot } from "../services/local-store";
 import { createDemoSnapshot } from "../features/book/demo-data";
 import type { BookOperation } from "../types/book";
 
@@ -47,5 +47,26 @@ describe("локальное offline-хранилище", () => {
     const draft = { values: { title: "Кекс" }, coverImage: { id: "draft-photo", url: "data:image/webp;base64,dGVzdA==" }, originalImages: [] };
     await saveDraft("recipe:new", draft);
     expect(await getDraft("recipe:new")).toEqual(draft);
+  });
+  it("вытесняет старые фото из ограниченного кэша", async () => {
+    const dates = vi.spyOn(Date.prototype, "toISOString").mockReturnValueOnce("2026-09-15T00:00:00Z").mockReturnValue("2026-09-15T00:00:01Z");
+    try {
+      await cacheImageBlob("old", "main", new Blob(["12345"]));
+      await cacheImageBlob("new", "main", new Blob(["12345"]));
+    } finally { dates.mockRestore(); }
+    await pruneImageCache(5);
+    expect(await getCachedImageBlob("old", "main")).toBeNull();
+    expect((await getCachedImageBlob("new", "main"))?.size).toBe(5);
+  });
+  it("очистка кэша не удаляет книгу, черновик или неотправленное фото", async () => {
+    const snapshot = createDemoSnapshot(); await setLocalSnapshot(snapshot);
+    await saveDraft("recipe:new", { title: "Кекс" });
+    const blob = new Blob(["photo"]);
+    await savePendingImage({ id: "pending", kind: "cover", main: blob, thumbnail: blob, alt: "", width: 10, height: 10, createdAt: "2026-09-15" });
+    await cacheImageBlob("uploaded", "main", blob); await clearCachedImages();
+    expect(await getCachedImageBlob("uploaded", "main")).toBeNull();
+    expect(await getLocalSnapshot()).toEqual(snapshot);
+    expect(await getDraft("recipe:new")).toEqual({ title: "Кекс" });
+    expect(await listPendingImages()).toHaveLength(1);
   });
 });

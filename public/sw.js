@@ -1,4 +1,5 @@
-const CACHE_VERSION = "maminy-recipes-v1.2.0";
+const CACHE_VERSION = "maminy-recipes-v1.3.0";
+const IMAGE_CACHE_LIMIT_BYTES = 24 * 1024 * 1024;
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 const DB_NAME = "maminy-recipes";
@@ -27,6 +28,7 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys()
       .then((keys) => Promise.all(keys.filter((key) => key.startsWith("maminy-recipes-") && !key.startsWith(CACHE_VERSION)).map((key) => caches.delete(key))))
+      .then(() => pruneImageCache().catch(() => undefined))
       .then(() => self.clients.claim()),
   );
 });
@@ -69,9 +71,25 @@ async function writeStore(storeName, value) {
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(storeName, "readwrite");
     const request = transaction.objectStore(storeName).put(value);
-    request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error);
-    transaction.oncomplete = () => db.close();
+    transaction.oncomplete = () => { db.close(); resolve(); };
+    transaction.onerror = transaction.onabort = () => { db.close(); reject(transaction.error); };
+  });
+}
+
+async function pruneImageCache() {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction("imageCache", "readwrite");
+    const store = transaction.objectStore("imageCache");
+    const request = store.getAll();
+    request.onsuccess = () => {
+      const entries = request.result.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+      let total = entries.reduce((sum, item) => sum + item.blob.size, 0);
+      for (const item of entries) { if (total <= IMAGE_CACHE_LIMIT_BYTES) break; store.delete(item.key); total -= item.blob.size; }
+    };
+    transaction.oncomplete = () => { db.close(); resolve(); };
+    transaction.onerror = transaction.onabort = () => { db.close(); reject(transaction.error); };
   });
 }
 
@@ -87,7 +105,10 @@ async function yandexImage(requestUrl, relativePath) {
   const variant = requestUrl.searchParams.get("variant") === "thumbnail" ? "thumbnail" : "main";
   const key = `${id}:${variant}`;
   const cached = await readStore("imageCache", key).catch(() => null);
-  if (cached?.blob) return new Response(cached.blob, { headers: { "Content-Type": cached.blob.type || "image/webp", "Cache-Control": "private, max-age=31536000" } });
+  if (cached?.blob) {
+    await writeStore("imageCache", { ...cached, updatedAt: new Date().toISOString() }).catch(() => undefined);
+    return new Response(cached.blob, { headers: { "Content-Type": cached.blob.type || "image/webp", "Cache-Control": "no-store" } });
+  }
 
   const auth = await readStore("auth", "yandex").catch(() => null);
   if (!auth?.accessToken || (auth.expiresAt && auth.expiresAt <= Date.now())) return imagePlaceholder();
@@ -101,7 +122,8 @@ async function yandexImage(requestUrl, relativePath) {
     if (!imageResponse.ok) return imagePlaceholder();
     const blob = await imageResponse.blob();
     await writeStore("imageCache", { key, blob, updatedAt: new Date().toISOString() }).catch(() => undefined);
-    return new Response(blob, { headers: { "Content-Type": blob.type || "image/webp", "Cache-Control": "private, max-age=31536000" } });
+    await pruneImageCache().catch(() => undefined);
+    return new Response(blob, { headers: { "Content-Type": blob.type || "image/webp", "Cache-Control": "no-store" } });
   } catch {
     return imagePlaceholder();
   }

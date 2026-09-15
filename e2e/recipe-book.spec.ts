@@ -1,5 +1,62 @@
 import { expect, test } from "@playwright/test";
 
+test("режим готовки занимает весь экран и сохраняет отметки отдельно от рецепта", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: /Открыть рецепт «Домашний борщ»/ }).click();
+  await page.getByRole("button", { name: "Режим готовки", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  const bounds = await dialog.boundingBox();
+  expect(bounds?.x).toBe(0); expect(bounds?.y).toBe(0);
+  expect(bounds?.width).toBe(page.viewportSize()!.width);
+  expect(bounds?.height).toBe(page.viewportSize()!.height);
+  await dialog.getByRole("checkbox", { name: "Отметить шаг 1" }).check();
+  await expect(dialog.getByText("1 из 4", { exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "Назад", exact: true }).click();
+  await page.getByRole("button", { name: "Режим готовки", exact: true }).click();
+  await expect(dialog.getByRole("checkbox", { name: "Отметить шаг 1" })).toBeChecked();
+});
+
+test("фильтры компактные, случайное блюдо учитывает категорию", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Фильтры", exact: true }).click();
+  expect((await page.locator(".filter-popover").boundingBox())!.width).toBeLessThanOrEqual(330);
+  await expect(page.locator('[data-slot="dialog-overlay"]')).toHaveCount(0);
+  await page.getByRole("button", { name: "Закрыть фильтры", exact: true }).click();
+  const random = page.getByRole("button", { name: "Случайное", exact: true });
+  if (await random.isVisible()) await random.click();
+  else await page.getByRole("button", { name: "Что приготовить?", exact: true }).click();
+  await page.getByRole("combobox", { name: "Категория случайного блюда" }).click();
+  await page.getByRole("option", { name: "Супы", exact: true }).click();
+  await page.getByRole("button", { name: "Выбрать блюдо", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Домашний борщ", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Открыть рецепт", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Домашний борщ", exact: true })).toBeVisible();
+});
+
+test("длинный текст не растягивает колонки, покупки очищаются с подтверждением", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Добавить рецепт", exact: true }).click();
+  await page.getByLabel("Название блюда *").fill("Длинная заметка");
+  await page.getByLabel("Название", { exact: true }).first().fill("Мука");
+  await page.getByLabel("Уточнение", { exact: true }).first().fill("а".repeat(1000));
+  await page.getByLabel("Шаг 1", { exact: true }).fill("Смешать и приготовить.");
+  await page.getByLabel("Источник или комментарий", { exact: true }).fill("Большая заметка.\n".repeat(400));
+  expect(await page.getByLabel("Источник или комментарий", { exact: true }).evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await page.getByRole("button", { name: "Сохранить рецепт", exact: true }).last().click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await expect(page.getByText("Оригинал из старой книги", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Добавить в покупки", exact: true }).click();
+  await page.getByRole("button", { name: /Добавить выбранное/ }).click();
+  await page.getByRole("button", { name: "Назад", exact: true }).click();
+  await page.getByRole("button", { name: /Покупки/ }).filter({ visible: true }).click();
+  await page.getByRole("button", { name: "Очистить весь список", exact: true }).click();
+  await page.getByRole("button", { name: "Отмена", exact: true }).click();
+  await expect(page.locator(".shopping-item")).toHaveCount(1);
+  await page.getByRole("button", { name: "Очистить весь список", exact: true }).click();
+  await page.getByRole("button", { name: "Очистить всё", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Список пока пуст", exact: true })).toBeVisible();
+});
+
 test("создание, редактирование и избранное", async ({ page }) => {
   await page.goto("/");
   const intro = page.getByRole("button", { name: "Открыть книгу" });

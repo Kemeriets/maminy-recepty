@@ -6,7 +6,7 @@ import { applyOperation } from "./logic";
 import { createDemoSnapshot } from "./demo-data";
 import { HybridRecipeRepository } from "../../repositories/recipe-repository";
 import { createId, nowIso } from "../../lib/ids";
-import { listQueuedOperations } from "../../services/local-store";
+import { getLocalSnapshot, listQueuedOperations } from "../../services/local-store";
 import type { RuntimeProvider } from "../../services/runtime-config";
 import type { BookOperation, BookOperationInput, BookSnapshot } from "../../types/book";
 
@@ -39,16 +39,24 @@ export function BookProvider({ children }: { children: React.ReactNode }) {
   const cloudProvider = repository.provider();
   const cloudReady = repository.cloudReady();
   const [cloudConnected, setCloudConnected] = useState(cloudProvider === "sites");
+  const workQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const enqueue = useCallback(<T,>(action: () => Promise<T>): Promise<T> => {
+    const run = async (): Promise<T> => navigator.locks ? await navigator.locks.request("recipe-book-data", action) : action();
+    const job = workQueue.current.then(run, run);
+    workQueue.current = job.catch(() => undefined);
+    return job;
+  }, []);
 
   const updateSnapshot = useCallback((next: BookSnapshot) => {
     snapshotRef.current = next;
     setSnapshot(next);
   }, []);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(() => enqueue(async () => {
     const connected = await repository.cloudConnected();
     setCloudConnected(connected);
     if (repository.provider() === "local" || (repository.provider() === "yandex-disk" && !connected)) {
+      const local = await getLocalSnapshot(); if (local) updateSnapshot(local);
       setPendingCount((await listQueuedOperations().catch(() => [])).length);
       setSyncState("local");
       return false;
@@ -59,7 +67,7 @@ export function BookProvider({ children }: { children: React.ReactNode }) {
     }
     setSyncState("syncing");
     try {
-      const next = await repository.flush(snapshotRef.current);
+      const next = await repository.flush((await getLocalSnapshot()) ?? snapshotRef.current);
       updateSnapshot(next);
       const queued = await listQueuedOperations().catch(() => []);
       setPendingCount(queued.length);
@@ -70,10 +78,11 @@ export function BookProvider({ children }: { children: React.ReactNode }) {
       setSyncState("error");
       return false;
     }
-  }, [repository, updateSnapshot]);
+  }), [enqueue, repository, updateSnapshot]);
 
   useEffect(() => {
     let active = true;
+    let opened = false;
     void (async () => {
       try {
         const loggedIn = await repository.consumeLogin();
@@ -84,6 +93,7 @@ export function BookProvider({ children }: { children: React.ReactNode }) {
         setCloudConnected(connected);
         setPendingCount((await listQueuedOperations().catch(() => [])).length);
         setLoading(false);
+        opened = true;
         if (!navigator.onLine) setSyncState("offline");
         else if (repository.provider() === "local" || (repository.provider() === "yandex-disk" && !connected)) setSyncState("local");
         else setSyncState(remote ? "synced" : "syncing");
@@ -98,12 +108,17 @@ export function BookProvider({ children }: { children: React.ReactNode }) {
     })();
     const online = () => void refresh();
     const offline = () => setSyncState("offline");
+    const visible = () => { if (opened && document.visibilityState === "visible" && navigator.onLine) void refresh(); };
+    const interval = window.setInterval(() => { if (document.visibilityState === "visible" && navigator.onLine) void refresh(); }, 60000);
     window.addEventListener("online", online);
     window.addEventListener("offline", offline);
+    document.addEventListener("visibilitychange", visible);
     return () => {
       active = false;
       window.removeEventListener("online", online);
       window.removeEventListener("offline", offline);
+      document.removeEventListener("visibilitychange", visible);
+      window.clearInterval(interval);
     };
   }, [refresh, repository, updateSnapshot]);
 
@@ -119,9 +134,9 @@ export function BookProvider({ children }: { children: React.ReactNode }) {
     setSyncState("local");
   }, [repository]);
 
-  const perform = useCallback(async (raw: BookOperationInput) => {
+  const perform = useCallback((raw: BookOperationInput) => enqueue(async () => {
     const operation = { ...raw, opId: createId("op"), createdAt: nowIso() } as BookOperation;
-    const previous = snapshotRef.current;
+    const previous = (await getLocalSnapshot()) ?? snapshotRef.current;
     const next = applyOperation(previous, operation);
     updateSnapshot(next);
     let saved: boolean;
@@ -138,13 +153,18 @@ export function BookProvider({ children }: { children: React.ReactNode }) {
       if (hasPendingImages) {
         setSyncState("syncing");
         void refresh();
-      } else setSyncState("synced");
+      } else {
+        const queued = await listQueuedOperations(); setPendingCount(queued.length);
+        setSyncState(queued.length ? "syncing" : "synced");
+        if (queued.length) void refresh();
+      }
     }
-  }, [refresh, repository, updateSnapshot]);
+  }), [enqueue, refresh, repository, updateSnapshot]);
 
-  const performMany = useCallback(async (rawOperations: BookOperationInput[]) => {
+  const performMany = useCallback((rawOperations: BookOperationInput[]) => enqueue(async () => {
+    if (!rawOperations.length) return;
     const operations = rawOperations.map((raw) => ({ ...raw, opId: createId("op"), createdAt: nowIso() }) as BookOperation);
-    const previous = snapshotRef.current;
+    const previous = (await getLocalSnapshot()) ?? snapshotRef.current;
     let next = previous;
     for (const operation of operations) next = applyOperation(next, operation);
     updateSnapshot(next);
@@ -161,9 +181,13 @@ export function BookProvider({ children }: { children: React.ReactNode }) {
       if (hasPendingImages) {
         setSyncState("syncing");
         void refresh();
-      } else setSyncState("synced");
+      } else {
+        const queued = await listQueuedOperations(); setPendingCount(queued.length);
+        setSyncState(queued.length ? "syncing" : "synced");
+        if (queued.length) void refresh();
+      }
     }
-  }, [refresh, repository, updateSnapshot]);
+  }), [enqueue, refresh, repository, updateSnapshot]);
 
   const value = useMemo(() => ({ snapshot, loading, syncState, pendingCount, cloudProvider, cloudReady, cloudConnected, perform, performMany, refresh, connectCloud, disconnectCloud }), [snapshot, loading, syncState, pendingCount, cloudProvider, cloudReady, cloudConnected, perform, performMany, refresh, connectCloud, disconnectCloud]);
   return <BookContext.Provider value={value}>{children}</BookContext.Provider>;

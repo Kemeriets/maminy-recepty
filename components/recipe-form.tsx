@@ -20,7 +20,7 @@ import { isOptionalRecipeNumber } from "../features/book/recipe-input";
 const optionalNumber = z.string().refine((value) => isOptionalRecipeNumber(value), "Введите число не меньше нуля");
 const recipeFormSchema = z.object({
   title: z.string().trim().min(1, "Введите название блюда").max(120, "Слишком длинное название"),
-  description: z.string().max(600, "Описание слишком длинное"),
+  description: z.string().max(10000, "Максимум 10 000 символов в описании"),
   categoryId: z.string(),
   servings: z.string().refine((value) => isOptionalRecipeNumber(value, true), "Порций должно быть больше нуля"),
   prepTimeMinutes: optionalNumber,
@@ -29,8 +29,8 @@ const recipeFormSchema = z.object({
     id: z.string(), name: z.string().trim().min(1, "Напишите название ингредиента"), amount: z.string(), unit: z.string(), note: z.string(),
   })).min(1, "Добавьте хотя бы один ингредиент"),
   steps: z.array(z.object({ id: z.string(), text: z.string().trim().min(1, "Опишите шаг") })).min(1, "Добавьте хотя бы один шаг"),
-  note: z.string().max(1200, "Заметка слишком длинная"),
-  familyStory: z.string().max(2000, "Комментарий слишком длинный"),
+  note: z.string().max(40000, "Максимум 40 000 символов в заметке"),
+  familyStory: z.string().max(40000, "Максимум 40 000 символов в комментарии"),
   tags: z.string().max(300, "Слишком много тегов"),
 });
 
@@ -199,7 +199,7 @@ export function RecipeForm({ recipe, bookId, categories, onSave, onCancel, onDir
               <label className="field"><span>Название</span><Input {...form.register(`ingredients.${index}.name`)} placeholder="Мука" aria-invalid={Boolean(form.formState.errors.ingredients?.[index]?.name)} /><small>{form.formState.errors.ingredients?.[index]?.name?.message}</small></label>
               <label className="field"><span>Количество</span><Input {...form.register(`ingredients.${index}.amount`)} placeholder="300 или по вкусу" inputMode="decimal" /></label>
               <label className="field"><span>Единица</span><Input {...form.register(`ingredients.${index}.unit`)} placeholder="г" /></label>
-              <label className="field field--note"><span>Уточнение</span><Input {...form.register(`ingredients.${index}.note`)} placeholder="просеять" /></label>
+              <label className="field field--note"><span>Уточнение</span><Textarea {...form.register(`ingredients.${index}.note`)} placeholder="просеять" rows={2} /></label>
               <div className="row-actions"><button type="button" onClick={() => ingredients.move(index, index - 1)} disabled={index === 0} aria-label="Поднять ингредиент"><ArrowUp /></button><button type="button" onClick={() => ingredients.move(index, index + 1)} disabled={index === ingredients.fields.length - 1} aria-label="Опустить ингредиент"><ArrowDown /></button><button type="button" className="delete" onClick={() => ingredients.fields.length > 1 && ingredients.remove(index)} disabled={ingredients.fields.length === 1} aria-label="Удалить ингредиент"><Trash2 /></button></div>
             </div>)}
           </div>
@@ -223,13 +223,6 @@ export function RecipeForm({ recipe, bookId, categories, onSave, onCancel, onDir
           <label className="field"><span>Заметка</span><Textarea {...form.register("note")} placeholder="Например: сахара класть совсем немного" rows={3} /><small>{form.formState.errors.note?.message}</small></label>
           <label className="field"><span>Источник или комментарий</span><Textarea {...form.register("familyStory")} placeholder="Откуда рецепт, что можно изменить или заменить" rows={3} /><small>{form.formState.errors.familyStory?.message}</small></label>
           <label className="field"><span>Теги через запятую</span><Input {...form.register("tags")} placeholder="быстро, к празднику, яблоки" /><small>{form.formState.errors.tags?.message}</small></label>
-          <div className="original-uploader">
-            <div><strong>Фотографии страниц старой книги</strong><p>Для рукописного текста сохраняется повышенное качество.</p></div>
-            <div className="original-uploader__grid">
-              {originalImages.map((image) => <div key={image.id} className="original-thumb"><img src={image.thumbnailUrl || image.url} alt={image.alt || "Оригинал страницы"} /><button type="button" onClick={() => { setOriginalImages((images) => images.filter((item) => item.id !== image.id)); setImageDirty(true); }} aria-label="Убрать страницу"><X /></button></div>)}
-              <label className="original-add"><ImagePlus /><span>Добавить страницу</span><input type="file" accept="image/*" multiple onChange={(event) => Array.from(event.target.files ?? []).forEach((file) => void handleImage(file, "original"))} /></label>
-            </div>
-          </div>
         </section>
 
         <div className="editor-savebar">
