@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Archive, BookOpen, ChevronRight, Cloud, CloudOff, Download, FolderOpen, HardDrive, Info, Loader2, LogOut, PackageOpen, Plus, RefreshCw, RotateCcw, Smartphone, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "./ui/button";
@@ -8,7 +8,7 @@ import { Input } from "./ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "./ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "./ui/alert-dialog";
 import { APP_CONFIG } from "../config/app.config";
-import { downloadJsonBackup, downloadZipBackup } from "../services/backup-service";
+import { downloadJsonBackup, downloadZipBackup, recoverPhotoCacheFromZip } from "../services/backup-service";
 import { createId, nowIso } from "../lib/ids";
 import { useBook } from "../features/book/book-context";
 import type { BookOperationInput, BookSnapshot, Category } from "../types/book";
@@ -28,6 +28,8 @@ interface SettingsPageProps {
 export function SettingsPage({ snapshot, onNavigateImport, onNavigateTrash, onPerform, onInstall, onCheckUpdate }: SettingsPageProps) {
   const { cloudProvider, cloudReady, cloudConnected, pendingCount, syncState, syncIssue, connectCloud, disconnectCloud, refresh } = useBook();
   const [zipLoading, setZipLoading] = useState(false);
+  const [photosLoading, setPhotosLoading] = useState(false);
+  const photoFileInput = useRef<HTMLInputElement>(null);
   const [cloudBusy, setCloudBusy] = useState(false);
   const deletedCount = snapshot.recipes.filter((recipe) => recipe.deletedAt).length;
   const demoCount = snapshot.recipes.filter((recipe) => recipe.isDemo).length;
@@ -40,6 +42,15 @@ export function SettingsPage({ snapshot, onNavigateImport, onNavigateTrash, onPe
   const textBackup = () => {
     try { downloadJsonBackup(snapshot); }
     catch { toast.error("Не удалось скачать копию рецептов"); }
+  };
+  const recoverPhotos = async (file: File | undefined) => {
+    if (!file) return;
+    setPhotosLoading(true);
+    try {
+      const restored = await recoverPhotoCacheFromZip(file, snapshot);
+      toast.success(`Загружено фотографий: ${restored.thumbnails}`, { description: "Рецепты и данные в облаке не изменены. Откройте каталог ещё раз." });
+    } catch (error) { toast.error("Не удалось загрузить фотографии", { description: error instanceof Error ? error.message : "Проверьте ZIP-архив" }); }
+    finally { setPhotosLoading(false); if (photoFileInput.current) photoFileInput.current.value = ""; }
   };
   const syncCloud = async () => {
     setCloudBusy(true);
@@ -67,7 +78,7 @@ export function SettingsPage({ snapshot, onNavigateImport, onNavigateTrash, onPe
               <small>Для первого подключения владелец сайта один раз создаёт приложение в Яндексе. Это не требует собственного сервера.</small>
               <YandexSetup onConnect={connectCloud} />
             </> : cloudConnected ? <>
-              <p>{syncState === "synced" ? "Рецепты синхронизированы с приватной папкой приложения на Яндекс Диске." : "Вход через Яндекс выполнен. Неотправленные изменения остаются на устройстве до успешной синхронизации."} На другом устройстве откройте этот сайт и войдите в тот же аккаунт Яндекса. Подойдёт мобильный интернет, Wi‑Fi не нужен.</p>
+              <p>{syncState === "synced" ? "Тексты рецептов синхронизированы с приватной папкой приложения на Яндекс Диске. Фото загружаются отдельно при просмотре." : "Вход через Яндекс выполнен. Неотправленные изменения остаются на устройстве до успешной синхронизации."} На другом устройстве откройте этот сайт и войдите в тот же аккаунт Яндекса. Подойдёт мобильный интернет, Wi‑Fi не нужен.</p>
               <div className="settings-actions"><Button onClick={() => void syncCloud()} disabled={cloudBusy}>{cloudBusy ? <Loader2 className="animate-spin" /> : <RefreshCw />} Синхронизировать</Button>
                 <AlertDialog><AlertDialogTrigger asChild><Button variant="outline" disabled={cloudBusy}>Отключить</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Отключить синхронизацию?</AlertDialogTitle><AlertDialogDescription>Рецепты на устройстве и Яндекс Диске останутся. Новые изменения не будут передаваться между устройствами до повторного подключения.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Отмена</AlertDialogCancel><AlertDialogAction onClick={() => void disconnect()}>Отключить</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
               </div><small role="status">{syncState === "error" ? `Синхронизация не завершена. Изменений в очереди: ${pendingCount}` : syncState === "offline" ? "Нет интернета. Отправка продолжится после подключения." : pendingCount ? `Изменений в очереди: ${pendingCount}` : "Нет изменений в очереди отправки"}</small>
@@ -80,7 +91,7 @@ export function SettingsPage({ snapshot, onNavigateImport, onNavigateTrash, onPe
           </div>
         </section>
         <StorageInfo cloudConnected={cloudConnected} />
-        <section className="settings-card settings-card--important"><div className="settings-card__icon"><Archive /></div><div><h2>Резервная копия</h2><p>Скачивайте копию после важных изменений. Она позволит восстановить рецепты независимо от сайта и синхронизации.</p><div className="settings-actions"><Button onClick={textBackup} variant="outline"><Download /> Только рецепты · JSON</Button><Button onClick={() => void fullBackup()} disabled={zipLoading}>{zipLoading ? <Loader2 className="animate-spin" /> : <PackageOpen />} Рецепты и фото · ZIP</Button></div><small>Для полного переноса выбирайте ZIP. JSON содержит тексты и ссылки на фотографии, но не сами файлы. Очистка данных сайта или приватный режим могут удалить локальные рецепты.</small></div></section>
+        <section className="settings-card settings-card--important"><div className="settings-card__icon"><Archive /></div><div><h2>Резервная копия</h2><p>Скачивайте копию после важных изменений. Она позволит восстановить рецепты независимо от сайта и синхронизации.</p><div className="settings-actions"><Button onClick={textBackup} variant="outline"><Download /> Только рецепты · JSON</Button><Button onClick={() => void fullBackup()} disabled={zipLoading}>{zipLoading ? <Loader2 className="animate-spin" /> : <PackageOpen />} Рецепты и фото · ZIP</Button></div><small>Для полного переноса выбирайте ZIP. JSON содержит тексты и ссылки на фотографии, но не сами файлы. Очистка данных сайта или приватный режим могут удалить локальные рецепты.</small>{cloudProvider === "yandex-disk" && <div className="photo-recovery"><strong>Не видны фото на телефоне?</strong><p>На компьютере скачайте «Рецепты и фото · ZIP» и передайте архив на телефон. Загрузите его здесь: фотографии этой книги сохранятся на устройстве. Рецепты и облако не изменятся.</p><input ref={photoFileInput} type="file" accept=".zip,application/zip" className="sr-only" aria-label="Выберите ZIP с фотографиями" onChange={(event) => void recoverPhotos(event.target.files?.[0])} /><Button variant="outline" disabled={photosLoading} onClick={() => photoFileInput.current?.click()}>{photosLoading ? <Loader2 className="animate-spin" /> : <FolderOpen />} Загрузить фото из ZIP</Button></div>}</div></section>
         <button className="settings-row" type="button" onClick={onNavigateImport}><span className="settings-row__icon"><RotateCcw /></span><span><strong>Импорт и восстановление</strong><small>Загрузить много рецептов или резервную копию</small></span><ChevronRight /></button>
         <ManageCategories items={snapshot.categories} bookId={snapshot.book.id} onPerform={onPerform} />
         <button className="settings-row" type="button" onClick={onNavigateTrash}><span className="settings-row__icon"><Trash2 /></span><span><strong>Корзина</strong><small>{deletedCount ? `Удалённых рецептов: ${deletedCount}` : "Корзина пуста"}</small></span><ChevronRight /></button>

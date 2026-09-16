@@ -1,6 +1,7 @@
 import { strToU8, unzipSync, zipSync } from "fflate";
 import { APP_CONFIG } from "../config/app.config";
 import { CURRENT_SCHEMA_VERSION, type BackupFile, type BookSnapshot, type RecipeImage } from "../types/book";
+import { cacheImageBlob } from "./local-store";
 
 interface ZipBackupFile extends BackupFile {
   mediaIndex: Record<string, string>;
@@ -109,4 +110,50 @@ export async function readZipBackup(file: File): Promise<{ backup: ZipBackupFile
     media.set(imageId, new Blob([bytes.slice().buffer as ArrayBuffer], { type }));
   }
   return { backup, media };
+}
+
+/** Put photos from this book into the local cache without changing any recipe or cloud data. */
+export async function recoverPhotoCacheFromZip(file: File, snapshot: BookSnapshot): Promise<{ thumbnails: number; full: number }> {
+  if (file.size > 60 * 1024 * 1024) throw new Error("Архив слишком велик для загрузки на телефон (более 60 МБ)");
+  let uncompressed = 0;
+  let archive: Record<string, Uint8Array>;
+  try {
+    archive = unzipSync(new Uint8Array(await file.arrayBuffer()), { filter: (entry) => {
+      uncompressed += entry.originalSize;
+      if (uncompressed > 90 * 1024 * 1024 || entry.originalSize > 8 * 1024 * 1024) throw new Error("Архив слишком велик для телефона");
+      return entry.name === "recipes.json" || /^(images|original-pages)\/[a-zA-Z0-9_-]+(?:-thumb)?\.(webp|jpe?g|png|avif)$/i.test(entry.name);
+    } });
+  } catch { throw new Error("Не удалось открыть ZIP с рецептами и фотографиями"); }
+  if (!archive["recipes.json"]) throw new Error("В архиве нет recipes.json");
+  let backup: ZipBackupFile;
+  try { backup = JSON.parse(new TextDecoder().decode(archive["recipes.json"])) as ZipBackupFile; }
+  catch { throw new Error("Файл recipes.json в архиве повреждён"); }
+  if (backup.schemaVersion !== CURRENT_SCHEMA_VERSION || !Array.isArray(backup.recipes) || !backup.mediaIndex || typeof backup.mediaIndex !== "object") throw new Error("Это не полная резервная копия с фото");
+  if (backup.book?.id !== snapshot.book.id) throw new Error("Этот архив относится к другой книге");
+  const currentIds = new Set(everyImage(snapshot).map((item) => item.id));
+  const backupIds = new Set(everyImage(backup).map((item) => item.id));
+  const available = Object.entries(backup.mediaIndex).filter(([id, path]) => currentIds.has(id) && backupIds.has(id) && typeof path === "string" && /^(images|original-pages)\/[a-zA-Z0-9_-]+\.(webp|jpe?g|png|avif)$/i.test(path));
+  if (!available.length) throw new Error("В архиве нет фотографий, которые относятся к этой книге");
+  let thumbnails = 0;
+  let full = 0;
+  let fullBytes = 0;
+  for (const [id, path] of available) {
+    const thumbnailPath = path.replace(/\.(webp|jpe?g|png|avif)$/i, "-thumb.$1");
+    const bytes = archive[thumbnailPath] ?? archive[path];
+    if (!bytes || bytes.byteLength > 1024 * 1024) continue;
+    const type = `image/${thumbnailPath.toLowerCase().endsWith(".jpg") ? "jpeg" : thumbnailPath.split(".").pop()?.toLowerCase()}`;
+    await cacheImageBlob(id, "thumbnail", new Blob([bytes.slice().buffer as ArrayBuffer], { type }));
+    thumbnails++;
+  }
+  // Keep small originals when space permits; give catalogue thumbnails priority.
+  for (const [id, path] of available) {
+    const bytes = archive[path];
+    if (!bytes || bytes.byteLength > 1024 * 1024 || fullBytes + bytes.byteLength > 10 * 1024 * 1024) continue;
+    const type = `image/${path.toLowerCase().endsWith(".jpg") ? "jpeg" : path.split(".").pop()?.toLowerCase()}`;
+    await cacheImageBlob(id, "main", new Blob([bytes.slice().buffer as ArrayBuffer], { type }));
+    fullBytes += bytes.byteLength;
+    full++;
+  }
+  if (!thumbnails && !full) throw new Error("В архиве не нашлось фотографий для этой книги");
+  return { thumbnails, full };
 }

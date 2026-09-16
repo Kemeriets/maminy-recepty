@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ArchiveRestore, BookOpenText, ChefHat, ChevronLeft, Clock3, Heart, Pencil, Share2, ShoppingBasket, Trash2 } from "lucide-react";
+import { ArchiveRestore, BookOpenText, ChefHat, ChevronLeft, Clock3, Heart, Pencil, RefreshCw, Share2, ShoppingBasket, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "./ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -30,6 +30,8 @@ export function RecipeDetail({ recipe, category, onBack, onEdit, onFavorite, onD
   const [cooking, setCooking] = useState(false);
   const [shoppingOpen, setShoppingOpen] = useState(false);
   const [shoppingBusy, setShoppingBusy] = useState(false);
+  const [photoFailed, setPhotoFailed] = useState(false);
+  const [photoRetry, setPhotoRetry] = useState(0);
   const [selectedIngredients, setSelectedIngredients] = useState<Set<string>>(() => new Set(recipe.ingredients.map((item) => item.id)));
   const minutes = totalRecipeMinutes(recipe);
   const scaledIngredients = useMemo(() => recipe.ingredients.map((item) => scaleIngredient(item, recipe.servings, servings)), [recipe, servings]);
@@ -84,8 +86,8 @@ export function RecipeDetail({ recipe, category, onBack, onEdit, onFavorite, onD
       </div>
 
       <div className="recipe-hero">
-        {recipe.coverImage ? <img src={recipe.coverImage.url} alt={recipe.coverImage.alt || recipe.title} className="recipe-hero__image" /> : (
-          <div className="recipe-hero__fallback"><BookOpenText /><span>Без фотографии</span></div>
+        {recipe.coverImage && !photoFailed ? <img src={photoRetry && recipe.coverImage.url.includes("/__images/") ? `${recipe.coverImage.url}${recipe.coverImage.url.includes("?") ? "&" : "?"}retry=${photoRetry}` : recipe.coverImage.url} alt={recipe.coverImage.alt || recipe.title} onError={() => setPhotoFailed(true)} className="recipe-hero__image" /> : (
+          <div className="recipe-hero__fallback"><BookOpenText /><span>{photoFailed ? "Фото временно недоступно" : "Без фотографии"}</span>{photoFailed && <button type="button" className="photo-retry" onClick={() => { setPhotoRetry(Date.now()); setPhotoFailed(false); }}><RefreshCw /> Повторить загрузку</button>}</div>
         )}
         <div className="recipe-hero__copy">
           <p className="eyebrow">{category?.name || "Без категории"}</p>
