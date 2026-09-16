@@ -102,10 +102,24 @@ async function uploadBlob(path: string, blob: Blob): Promise<void> {
 }
 
 async function downloadJson(path: string): Promise<unknown> {
-  const transfer = await requestTransfer("download", path);
-  const response = await fetchWithRetry(transfer.href, { cache: "no-store" }, 30000, "download");
-  if (!response.ok) throw new YandexDiskError("Не удалось прочитать файл с Яндекс Диска", response.status);
-  return readResponseJson(response, 30000, "download");
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    // Download links are temporary and may point to a different storage host.
+    // After a failed transfer, request one fresh link instead of retrying the
+    // same possibly stale/blocked URL over and over.
+    const transfer = await requestTransfer("download", path);
+    try {
+      const response = await fetchWithRetry(transfer.href, { cache: "no-store" }, 30000, "download", 1);
+      if (!response.ok) throw new YandexDiskError("Не удалось прочитать файл с Яндекс Диска", response.status);
+      return await readResponseJson(response, 30000, "download");
+    } catch (error) {
+      lastError = error;
+      const expiredLink = error instanceof YandexDiskError && [401, 403, 404].includes(error.status);
+      if (attempt > 0 || (!(error instanceof NetworkRequestError) && !expiredLink)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+  throw lastError;
 }
 
 export async function uploadYandexOperation(operation: BookOperation): Promise<void> {

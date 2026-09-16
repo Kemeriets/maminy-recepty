@@ -10,12 +10,18 @@ describe("первая отправка в папку приложения Ян�
   let deny = 0;
   let existing = false;
   let conflictingFile = false;
+  let downloadFailures = 0;
+  let downloadLinks = 0;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
     const method = init?.method ?? "GET";
     const path = url.searchParams.get("path") ?? "";
     requests.push({ path: url.pathname + ":" + path, method });
     if (url.hostname === "upload.example.com") return new Response(null, { status: 201 });
+    if (url.hostname === "download.example.com") {
+      if (downloadFailures > 0) { downloadFailures -= 1; throw new TypeError("temporary transfer failure"); }
+      return Response.json(operation);
+    }
     if (deny) return Response.json({ error: deny === 403 ? "ForbiddenError" : "UnauthorizedError", message: "internal details" }, { status: deny });
     if (url.pathname.endsWith("/resources") && method === "PUT") {
       if (existing) return Response.json({ error: "DiskResourceAlreadyExistsError" }, { status: 409 });
@@ -27,11 +33,15 @@ describe("первая отправка в папку приложения Ян�
       if (!existing && !directories.has(path.slice(0, path.lastIndexOf("/")))) return Response.json({ error: "DiskPathDoesntExistsError" }, { status: 404 });
       return Response.json({ href: "https://upload.example.com/book", method: "PUT" });
     }
+    if (url.pathname.endsWith("/resources/download")) {
+      downloadLinks += 1;
+      return Response.json({ href: `https://download.example.com/book-${downloadLinks}`, method: "GET" });
+    }
     throw new Error("Unexpected test request");
   });
   const operation: BookOperation = { opId: "offline-operation", createdAt: "2026-09-15T00:00:00Z", type: "demo.clear" };
   beforeEach(() => {
-    vi.resetModules(); vi.clearAllMocks(); directories.clear(); requests.length = 0; deny = 0; existing = false; conflictingFile = false;
+    vi.resetModules(); vi.clearAllMocks(); directories.clear(); requests.length = 0; deny = 0; existing = false; conflictingFile = false; downloadFailures = 0; downloadLinks = 0;
     storage.getCloudAuth.mockResolvedValue({ accessToken: "fixture-token", expiresAt: null });
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("window", { __MAMINY_RECIPES_CONFIG__: { provider: "yandex-disk", assetBase: "./" } });
@@ -86,5 +96,12 @@ describe("первая отправка в папку приложения Ян�
     const { uploadYandexOperation } = await import("../services/yandex-disk-service");
     await expect(uploadYandexOperation(operation)).rejects.toMatchObject({ status: 401 });
     expect(storage.clearCloudAuth).toHaveBeenCalledOnce();
+  });
+  it("получает новую временную ссылку после сбоя скачивания", async () => {
+    downloadFailures = 1;
+    const { downloadYandexOperation } = await import("../services/yandex-disk-service");
+    await expect(downloadYandexOperation(operation.opId)).resolves.toMatchObject({ opId: operation.opId });
+    expect(requests.filter((request) => request.path.startsWith("/v1/disk/resources/download:"))).toHaveLength(2);
+    expect(downloadLinks).toBe(2);
   });
 });

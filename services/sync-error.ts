@@ -18,6 +18,14 @@ export function describeSyncError(value: unknown): SyncIssue {
   }
   if (networkError) {
     const diagnostic = `NET_${networkError.stage.toUpperCase()}_${networkError.timedOut ? "TIMEOUT" : "FAILED"}`;
+    if (networkError.stage === "download") {
+      return {
+        kind: networkError.timedOut ? "timeout" : "network",
+        message: "Не удалось скачать файл книги с Яндекс Диска.",
+        help: "Связь с API Яндекса уже установлена, но отдельный сервер загрузки недоступен. Если включён VPN, Private DNS или блокировщик трафика, временно отключите его и повторите синхронизацию. Wi‑Fi не требуется, изменения остаются на устройстве.",
+        diagnostic,
+      };
+    }
     if (networkError.timedOut) {
       return {
         kind: "timeout",

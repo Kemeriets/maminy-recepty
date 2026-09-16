@@ -105,8 +105,8 @@ async function fetchYandexSnapshot(): Promise<BookSnapshot> {
   await ensureYandexBookFolders();
   const ids = await listYandexOperationIds();
   // Fetch new immutable operation files in small batches, not one long chain.
-  for (let offset = 0; offset < ids.length; offset += 4) {
-    await Promise.all(ids.slice(offset, offset + 4).map(async (id) => {
+  for (let offset = 0; offset < ids.length; offset += 2) {
+    await Promise.all(ids.slice(offset, offset + 2).map(async (id) => {
     if (await hasRemoteOperation(id)) return;
     const operation = normalizeYandexOperation(await downloadYandexOperation(id));
     await cacheRemoteOperation(operation);

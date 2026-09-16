@@ -30,4 +30,10 @@ describe("понятные и безопасные ошибки синхрони
     expect(issue.kind).toBe("local");
     expect(issue.help).toContain("Не очищайте данные сайта");
   });
+  it("объясняет отдельный сбой файлового сервера Яндекса", () => {
+    const issue = describeSyncError(new NetworkRequestError("download", false, new TypeError("Failed to fetch")));
+    expect(issue.diagnostic).toBe("NET_DOWNLOAD_FAILED");
+    expect(issue.help).toContain("VPN");
+    expect(issue.help).toContain("Wi‑Fi не требуется");
+  });
 });
