@@ -1,4 +1,4 @@
-const CACHE_VERSION = "maminy-recipes-v1.3.7";
+const CACHE_VERSION = "maminy-recipes-v1.3.8";
 const IMAGE_CACHE_LIMIT_BYTES = 24 * 1024 * 1024;
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
@@ -96,7 +96,7 @@ async function pruneImageCache() {
     const store = transaction.objectStore("imageCache");
     const request = store.getAll();
     request.onsuccess = () => {
-      const entries = request.result.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+      const entries = request.result.sort((a, b) => Number(a.key.endsWith(":thumbnail")) - Number(b.key.endsWith(":thumbnail")) || a.updatedAt.localeCompare(b.updatedAt));
       let total = entries.reduce((sum, item) => sum + item.blob.size, 0);
       for (const item of entries) { if (total <= IMAGE_CACHE_LIMIT_BYTES) break; store.delete(item.key); total -= item.blob.size; }
     };

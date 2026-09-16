@@ -27,6 +27,13 @@ describe("локальное offline-хранилище", () => {
     expect(await getCloudAuth()).toEqual({ accessToken: "test-token", expiresAt: null });
     expect((await getCachedImageBlob("image-1", "thumbnail"))?.type).toBe("image/webp");
   });
+  it("при нехватке места сохраняет миниатюры, удаляя большие фото первыми", async () => {
+    await cacheImageBlob("first", "thumbnail", new Blob(["thumb"]));
+    await cacheImageBlob("second", "main", new Blob(["large-main-image"]));
+    await pruneImageCache(6);
+    expect(await getCachedImageBlob("first", "thumbnail")).not.toBeNull();
+    expect(await getCachedImageBlob("second", "main")).toBeNull();
+  });
   it("фиксирует книгу и очередь синхронизации одной транзакцией", async () => {
     const snapshot = createDemoSnapshot();
     const operation: BookOperation = { opId: "atomic-1", type: "recipe.favorite", recipeId: snapshot.recipes[0].id, favorite: true, createdAt: new Date().toISOString() };

@@ -144,7 +144,7 @@ export async function pruneImageCache(limit = IMAGE_CACHE_LIMIT_BYTES): Promise<
     const store = tx.objectStore("imageCache");
     const request = store.getAll();
     request.onsuccess = () => {
-      const entries = (request.result as CachedImage[]).sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+      const entries = (request.result as CachedImage[]).sort((a, b) => Number(a.key.endsWith(":thumbnail")) - Number(b.key.endsWith(":thumbnail")) || a.updatedAt.localeCompare(b.updatedAt));
       let total = entries.reduce((sum, entry) => sum + entry.blob.size, 0);
       for (const entry of entries) { if (total <= limit) break; store.delete(entry.key); total -= entry.blob.size; }
     };

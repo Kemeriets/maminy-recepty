@@ -1,9 +1,15 @@
 import { strToU8, unzipSync, zipSync } from "fflate";
 import { APP_CONFIG } from "../config/app.config";
 import { CURRENT_SCHEMA_VERSION, type BackupFile, type BookSnapshot, type RecipeImage } from "../types/book";
-import { cacheImageBlob } from "./local-store";
+import { cacheImageBlob, getCachedImageBlob } from "./local-store";
 
 interface ZipBackupFile extends BackupFile {
+  mediaIndex: Record<string, string>;
+}
+
+interface PhotoTransferManifest {
+  schemaVersion: number;
+  bookId: string;
   mediaIndex: Record<string, string>;
 }
 
@@ -44,10 +50,19 @@ async function urlToBytes(url: string): Promise<{ bytes: Uint8Array; type: strin
     const blob = await response.blob();
     return { bytes: new Uint8Array(await blob.arrayBuffer()), type: blob.type };
   }
-  const response = await fetch(url);
+  const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
   if (!response.ok) throw new Error(`Не удалось добавить фотографию в копию: ${url}`);
   const blob = await response.blob();
   return { bytes: new Uint8Array(await blob.arrayBuffer()), type: blob.type };
+}
+
+async function transferImageBytes(image: RecipeImage, variant: "main" | "thumbnail"): Promise<{ bytes: Uint8Array; type: string }> {
+  const url = variant === "thumbnail" ? image.thumbnailUrl ?? image.url : image.url;
+  if (url.includes("/__images/")) {
+    const cached = await getCachedImageBlob(image.id, variant).catch(() => null);
+    if (cached) return { bytes: new Uint8Array(await cached.arrayBuffer()), type: cached.type };
+  }
+  return urlToBytes(url);
 }
 
 function everyImage(snapshot: BookSnapshot): RecipeImage[] {
@@ -86,6 +101,44 @@ export async function downloadZipBackup(snapshot: BookSnapshot): Promise<void> {
   download(new Blob([zipped.slice().buffer as ArrayBuffer], { type: "application/zip" }), `maminy-recepty-full-${dateStamp()}.zip`);
 }
 
+/** Export the images available on this device without pretending this is a complete backup. */
+export async function createPhotoTransferZip(snapshot: BookSnapshot): Promise<{ archive: Uint8Array; exported: number; skipped: number }> {
+  const files: Record<string, Uint8Array> = {};
+  const mediaIndex: Record<string, string> = {};
+  const images = Array.from(new Map(everyImage(snapshot).map((image) => [image.id, image])).values());
+  let skipped = 0;
+  let totalBytes = 0;
+  for (const image of images) {
+    let main: { bytes: Uint8Array; type: string } | null = null;
+    let thumbnail: { bytes: Uint8Array; type: string } | null = null;
+    try { main = await transferImageBytes(image, "main"); } catch { /* This image is not on this device. */ }
+    if (image.thumbnailUrl && image.thumbnailUrl !== image.url) {
+      try { thumbnail = await transferImageBytes(image, "thumbnail"); } catch { /* Use the main image if available. */ }
+    }
+    const available = main ?? thumbnail;
+    if (!available || totalBytes + available.bytes.byteLength + (main && thumbnail ? thumbnail.bytes.byteLength : 0) > 45 * 1024 * 1024) { skipped++; continue; }
+    const folder = image.kind === "original" ? "original-pages" : "images";
+    const mainPath = `${folder}/${image.id}.${extensionFromType(available.type)}`;
+    files[mainPath] = available.bytes;
+    mediaIndex[image.id] = mainPath;
+    totalBytes += available.bytes.byteLength;
+    if (thumbnail && main) {
+      files[`${folder}/${image.id}-thumb.${extensionFromType(thumbnail.type)}`] = thumbnail.bytes;
+      totalBytes += thumbnail.bytes.byteLength;
+    }
+  }
+  if (!Object.keys(mediaIndex).length) throw new Error("На этом устройстве нет доступных фотографий для переноса");
+  files["photos-manifest.json"] = strToU8(JSON.stringify({ schemaVersion: CURRENT_SCHEMA_VERSION, bookId: snapshot.book.id, mediaIndex } satisfies PhotoTransferManifest));
+  files["README.txt"] = strToU8("Фото для переноса между устройствами. Загрузите ZIP в настройках книги: Резервная копия → Загрузить фото из ZIP. Это не полная резервная копия.\n");
+  return { archive: zipSync(files, { level: 6 }), exported: Object.keys(mediaIndex).length, skipped };
+}
+
+export async function downloadPhotoTransferZip(snapshot: BookSnapshot): Promise<{ exported: number; skipped: number }> {
+  const result = await createPhotoTransferZip(snapshot);
+  download(new Blob([result.archive.slice().buffer as ArrayBuffer], { type: "application/zip" }), `recepty-foto-${dateStamp()}.zip`);
+  return { exported: result.exported, skipped: result.skipped };
+}
+
 export async function readJsonFile(file: File): Promise<unknown> {
   try { return JSON.parse(new TextDecoder().decode(await file.arrayBuffer())); }
   catch { throw new Error("Файл не похож на корректный JSON"); }
@@ -121,18 +174,21 @@ export async function recoverPhotoCacheFromZip(file: File, snapshot: BookSnapsho
     archive = unzipSync(new Uint8Array(await file.arrayBuffer()), { filter: (entry) => {
       uncompressed += entry.originalSize;
       if (uncompressed > 90 * 1024 * 1024 || entry.originalSize > 8 * 1024 * 1024) throw new Error("Архив слишком велик для телефона");
-      return entry.name === "recipes.json" || /^(images|original-pages)\/[a-zA-Z0-9_-]+(?:-thumb)?\.(webp|jpe?g|png|avif)$/i.test(entry.name);
+      return entry.name === "recipes.json" || entry.name === "photos-manifest.json" || /^(images|original-pages)\/[a-zA-Z0-9_-]+(?:-thumb)?\.(webp|jpe?g|png|avif)$/i.test(entry.name);
     } });
   } catch { throw new Error("Не удалось открыть ZIP с рецептами и фотографиями"); }
-  if (!archive["recipes.json"]) throw new Error("В архиве нет recipes.json");
-  let backup: ZipBackupFile;
-  try { backup = JSON.parse(new TextDecoder().decode(archive["recipes.json"])) as ZipBackupFile; }
-  catch { throw new Error("Файл recipes.json в архиве повреждён"); }
-  if (backup.schemaVersion !== CURRENT_SCHEMA_VERSION || !Array.isArray(backup.recipes) || !backup.mediaIndex || typeof backup.mediaIndex !== "object") throw new Error("Это не полная резервная копия с фото");
-  if (backup.book?.id !== snapshot.book.id) throw new Error("Этот архив относится к другой книге");
+  const manifestBytes = archive["photos-manifest.json"] ?? archive["recipes.json"];
+  if (!manifestBytes) throw new Error("В архиве нет списка фотографий");
+  let candidate: PhotoTransferManifest | ZipBackupFile;
+  try { candidate = JSON.parse(new TextDecoder().decode(manifestBytes)) as PhotoTransferManifest | ZipBackupFile; }
+  catch { throw new Error("Список фотографий в архиве повреждён"); }
+  if (candidate.schemaVersion !== CURRENT_SCHEMA_VERSION || !candidate.mediaIndex || typeof candidate.mediaIndex !== "object") throw new Error("Это не архив с фотографиями книги");
+  const fullBackup = "recipes" in candidate && Array.isArray(candidate.recipes) ? candidate : null;
+  const bookId = fullBackup?.book?.id ?? ("bookId" in candidate ? candidate.bookId : undefined);
+  if (bookId !== snapshot.book.id) throw new Error("Этот архив относится к другой книге");
   const currentIds = new Set(everyImage(snapshot).map((item) => item.id));
-  const backupIds = new Set(everyImage(backup).map((item) => item.id));
-  const available = Object.entries(backup.mediaIndex).filter(([id, path]) => currentIds.has(id) && backupIds.has(id) && typeof path === "string" && /^(images|original-pages)\/[a-zA-Z0-9_-]+\.(webp|jpe?g|png|avif)$/i.test(path));
+  const backupIds = fullBackup ? new Set(everyImage(fullBackup).map((item) => item.id)) : currentIds;
+  const available = Object.entries(candidate.mediaIndex).filter(([id, path]) => currentIds.has(id) && backupIds.has(id) && typeof path === "string" && /^(images|original-pages)\/[a-zA-Z0-9_-]+\.(webp|jpe?g|png|avif)$/i.test(path));
   if (!available.length) throw new Error("В архиве нет фотографий, которые относятся к этой книге");
   let thumbnails = 0;
   let full = 0;
