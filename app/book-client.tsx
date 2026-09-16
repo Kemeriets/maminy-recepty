@@ -52,6 +52,8 @@ function BookExperience({ initialView, initialRecipeId }: { initialView: Initial
   const [showIntro, setShowIntro] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
   const [updateReady, setUpdateReady] = useState<ServiceWorkerRegistration | null>(null);
+  const serviceWorkerRegistration = useRef<ServiceWorkerRegistration | null>(null);
+  const reloadingForUpdate = useRef(false);
   const editorDirty = useRef(false);
   const previousRoute = useRef("");
   const onEditorDirtyChange = useCallback((dirty: boolean) => { editorDirty.current = dirty; }, []);
@@ -70,20 +72,49 @@ function BookExperience({ initialView, initialRecipeId }: { initialView: Initial
     window.addEventListener("beforeinstallprompt", beforeInstall);
     const controllerChange = () => {
       if (editorDirty.current) { toast("Приложение обновлено", { description: "Сначала сохраните рецепт. Новая версия откроется при следующем запуске." }); return; }
+      if (reloadingForUpdate.current) return;
+      reloadingForUpdate.current = true;
       location.reload();
     };
+    const checkForUpdate = () => {
+      const registration = serviceWorkerRegistration.current;
+      if (registration) void registration.update().catch(() => undefined);
+    };
+    const checkWhenVisible = () => { if (document.visibilityState === "visible") checkForUpdate(); };
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register(runtimeAssetUrl("sw.js")).then((registration) => {
+      navigator.serviceWorker.register(runtimeAssetUrl("sw.js"), { updateViaCache: "none" }).then((registration) => {
+        serviceWorkerRegistration.current = registration;
         if (registration.waiting) setUpdateReady(registration);
         registration.addEventListener("updatefound", () => {
           const worker = registration.installing;
           worker?.addEventListener("statechange", () => { if (worker.state === "installed" && navigator.serviceWorker.controller) setUpdateReady(registration); });
         });
+        void registration.update().catch(() => undefined);
       }).catch(() => undefined);
       navigator.serviceWorker.addEventListener("controllerchange", controllerChange);
+      document.addEventListener("visibilitychange", checkWhenVisible);
+      window.addEventListener("online", checkForUpdate);
     }
-    return () => { window.cancelAnimationFrame(initialFrame); window.removeEventListener("beforeinstallprompt", beforeInstall); navigator.serviceWorker?.removeEventListener("controllerchange", controllerChange); };
+    return () => { window.cancelAnimationFrame(initialFrame); window.removeEventListener("beforeinstallprompt", beforeInstall); navigator.serviceWorker?.removeEventListener("controllerchange", controllerChange); document.removeEventListener("visibilitychange", checkWhenVisible); window.removeEventListener("online", checkForUpdate); };
   }, []);
+
+  const checkAppUpdate = async () => {
+    if (!("serviceWorker" in navigator)) { toast.error("Обновления не поддерживаются этим браузером"); return; }
+    try {
+      const registration = serviceWorkerRegistration.current ?? await navigator.serviceWorker.getRegistration();
+      if (!registration) { toast.error("Приложение ещё не готово к обновлению"); return; }
+      serviceWorkerRegistration.current = registration;
+      await registration.update();
+      if (registration.waiting) {
+        setUpdateReady(registration);
+        registration.waiting.postMessage({ type: "SKIP_WAITING" });
+      } else {
+        toast.success("Установлена актуальная версия", { description: `Версия ${APP_CONFIG.version}` });
+      }
+    } catch {
+      toast.error("Не удалось проверить обновление", { description: "Проверьте интернет и попробуйте ещё раз." });
+    }
+  };
 
   useEffect(() => {
     const readRoute = () => {
@@ -176,7 +207,7 @@ function BookExperience({ initialView, initialRecipeId }: { initialView: Initial
   } else if (view === "import") {
     content = <ImportCenter snapshot={snapshot} onBack={() => navigate("settings")} onImport={performMany} />;
   } else if (view === "settings") {
-    content = <SettingsPage snapshot={snapshot} onNavigateImport={() => navigate("import")} onNavigateTrash={() => navigate("trash")} onPerform={perform} onInstall={install} />;
+    content = <SettingsPage snapshot={snapshot} onNavigateImport={() => navigate("import")} onNavigateTrash={() => navigate("trash")} onPerform={perform} onInstall={install} onCheckUpdate={checkAppUpdate} />;
   } else if (view === "trash") {
     content = <TrashView snapshot={snapshot} onBack={() => navigate("settings")} onOpen={openRecipe} onPerform={performSafely} />;
   } else {

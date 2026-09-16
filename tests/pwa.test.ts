@@ -19,6 +19,15 @@ describe("PWA", () => {
     expect(source).toMatch(/self\.registration\.scope/);
     expect(source).toMatch(/__images/);
     expect(source).toMatch(/cloud-api\.yandex\.net/);
+    expect(source).toMatch(/cacheShell\(\)\.then\(\(\) => self\.skipWaiting\(\)\)/);
+    expect(source).toMatch(/Promise\.allSettled/);
+  });
+
+  it("проверяет обновление без HTTP-кэша при каждом запуске", async () => {
+    const source = await readFile(new URL("../app/book-client.tsx", import.meta.url), "utf8");
+    expect(source).toMatch(/updateViaCache: "none"/);
+    expect(source).toMatch(/registration\.update\(\)/);
+    expect(source).toMatch(/visibilitychange/);
   });
 
   it("имеет переносимый manifest для статического хостинга", async () => {

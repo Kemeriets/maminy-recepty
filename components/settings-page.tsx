@@ -22,9 +22,10 @@ interface SettingsPageProps {
   onNavigateTrash: () => void;
   onPerform: (operation: BookOperationInput) => Promise<void>;
   onInstall?: () => Promise<void>;
+  onCheckUpdate: () => Promise<void>;
 }
 
-export function SettingsPage({ snapshot, onNavigateImport, onNavigateTrash, onPerform, onInstall }: SettingsPageProps) {
+export function SettingsPage({ snapshot, onNavigateImport, onNavigateTrash, onPerform, onInstall, onCheckUpdate }: SettingsPageProps) {
   const { cloudProvider, cloudReady, cloudConnected, pendingCount, syncState, syncIssue, connectCloud, disconnectCloud, refresh } = useBook();
   const [zipLoading, setZipLoading] = useState(false);
   const [cloudBusy, setCloudBusy] = useState(false);
@@ -91,6 +92,7 @@ export function SettingsPage({ snapshot, onNavigateImport, onNavigateTrash, onPe
           <section><h3>Поделиться и удалить</h3><p>«Поделиться» отправляет полный текст рецепта, не открывая доступ к остальной книге. Удалённые рецепты сначала попадают в корзину, откуда их можно вернуть.</p></section>
         </div></DialogContent></Dialog>
         <section className="settings-card install-card"><div className="settings-card__icon"><Smartphone /></div><div><h2>Установить на телефон</h2><p>Приложение появится на главном экране и будет открываться без строки браузера.</p>{onInstall ? <Button onClick={() => void onInstall()}>Установить приложение</Button> : <ol><li>Откройте меню Chrome ⋮</li><li>Выберите «Установить приложение» или «Добавить на главный экран»</li></ol>}</div></section>
+        <button className="settings-row" type="button" onClick={() => void onCheckUpdate()}><span className="settings-row__icon"><RefreshCw /></span><span><strong>Проверить обновление</strong><small>Сейчас установлена версия {APP_CONFIG.version}</small></span><ChevronRight /></button>
         {demoCount > 0 && <AlertDialog><AlertDialogTrigger asChild><button className="settings-row settings-row--danger" type="button"><span className="settings-row__icon"><Trash2 /></span><span><strong>Удалить демонстрационные рецепты</strong><small>Примеров: {demoCount}. Ваши рецепты останутся.</small></span><ChevronRight /></button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Удалить все примеры?</AlertDialogTitle><AlertDialogDescription>Шарлотка, борщ и другие демонстрационные рецепты исчезнут. Собственные рецепты останутся.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Оставить</AlertDialogCancel><AlertDialogAction variant="destructive" onClick={() => void onPerform({ type: "demo.clear" }).catch(() => toast.error("Не удалось удалить примеры"))}>Удалить примеры</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>}
       </div>
       <footer className="settings-footer"><Info /><span>{APP_CONFIG.appName} · версия {APP_CONFIG.version}</span>{cloudProvider === "sites" && <a href="/signout-with-chatgpt?return_to=/" target="_top"><LogOut /> Выйти</a>}</footer>

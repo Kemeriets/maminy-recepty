@@ -1,4 +1,4 @@
-const CACHE_VERSION = "maminy-recipes-v1.3.4";
+const CACHE_VERSION = "maminy-recipes-v1.3.5";
 const IMAGE_CACHE_LIMIT_BYTES = 24 * 1024 * 1024;
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
@@ -20,8 +20,20 @@ const SHELL = [
   scoped("demo/original-turtle-thumb.webp"),
 ];
 
+async function cacheShell() {
+  const cache = await caches.open(SHELL_CACHE);
+  const [entry, ...optionalAssets] = SHELL;
+  const entryResponse = await fetch(new Request(entry, { cache: "reload" }));
+  if (!entryResponse.ok) throw new Error(`Не удалось загрузить оболочку приложения: ${entryResponse.status}`);
+  await cache.put(entry, entryResponse);
+  await Promise.allSettled(optionalAssets.map(async (asset) => {
+    const response = await fetch(new Request(asset, { cache: "reload" }));
+    if (response.ok) await cache.put(asset, response);
+  }));
+}
+
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL)));
+  event.waitUntil(cacheShell().then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (event) => {
