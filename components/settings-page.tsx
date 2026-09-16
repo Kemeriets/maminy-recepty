@@ -89,7 +89,7 @@ export function SettingsPage({ snapshot, onNavigateImport, onNavigateTrash, onPe
               <small>Для первого подключения владелец сайта один раз создаёт приложение в Яндексе. Это не требует собственного сервера.</small>
               <YandexSetup onConnect={connectCloud} />
             </> : cloudConnected ? <>
-              <p>{syncState === "synced" ? automaticPhotos ? "Рецепты и фотографии хранятся в приватной папке приложения на Яндекс Диске. Фото появляются на другом устройстве при открытии рецепта." : "Тексты рецептов синхронизированы. Передача фотографий между устройствами пока требует настройки фото-сервиса владельцем сайта." : "Вход через Яндекс выполнен. Неотправленные изменения остаются на устройстве до успешной синхронизации."} На другом устройстве откройте этот сайт и войдите в тот же аккаунт Яндекса. Подойдёт мобильный интернет, Wi‑Fi не нужен.</p>
+              <p>{syncState === "synced" ? automaticPhotos ? "Тексты рецептов синхронизированы. Фотографии появятся на другом устройстве при открытии, если служба передачи фото доступна." : "Тексты рецептов синхронизированы. Передача фотографий между устройствами пока требует настройки фото-сервиса владельцем сайта." : "Вход через Яндекс выполнен. Неотправленные изменения остаются на устройстве до успешной синхронизации."} На другом устройстве откройте этот сайт и войдите в тот же аккаунт Яндекса. Подойдёт мобильный интернет, Wi‑Fi не нужен.</p>
               {automaticPhotos && <PhotoRelayStatus />}
               <div className="settings-actions"><Button onClick={() => void syncCloud()} disabled={cloudBusy}>{cloudBusy ? <Loader2 className="animate-spin" /> : <RefreshCw />} Синхронизировать</Button>
                 <AlertDialog><AlertDialogTrigger asChild><Button variant="outline" disabled={cloudBusy}>Отключить</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Отключить синхронизацию?</AlertDialogTitle><AlertDialogDescription>Рецепты на устройстве и Яндекс Диске останутся. Новые изменения не будут передаваться между устройствами до повторного подключения.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Отмена</AlertDialogCancel><AlertDialogAction onClick={() => void disconnect()}>Отключить</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
@@ -124,18 +124,18 @@ export function SettingsPage({ snapshot, onNavigateImport, onNavigateTrash, onPe
 }
 
 function PhotoRelayStatus() {
-  const [status, setStatus] = useState<"checking" | "available" | "unavailable">("checking");
+  const [status, setStatus] = useState<"checking" | "available" | "private" | "unavailable">("checking");
   useEffect(() => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 9000);
     const url = `${getRuntimeConfig().mediaProxyUrl.replace(/\/$/u, "")}/health`;
     void fetch(url, { signal: controller.signal, cache: "no-store" })
-      .then((response) => setStatus(response.ok ? "available" : "unavailable"))
+      .then((response) => setStatus(response.ok ? "available" : response.status === 401 ? "private" : "unavailable"))
       .catch(() => setStatus("unavailable"))
       .finally(() => clearTimeout(timeout));
     return () => { controller.abort(); clearTimeout(timeout); };
   }, []);
-  return <small role="status">{status === "checking" ? "Проверяем связь со службой фотографий…" : status === "available" ? "Служба передачи фото доступна. Фотографии загружаются по мере просмотра." : "Служба передачи фото недоступна. Уже сохранённые снимки останутся на устройстве; попробуйте снова позже."}</small>;
+  return <small role="status">{status === "checking" ? "Проверяем связь со службой фотографий…" : status === "available" ? "Служба передачи фото доступна. Фотографии загружаются по мере просмотра." : status === "private" ? "Служба фотографий закрыта настройкой доступа. Попросите владельца книги включить передачу фото. Снимки останутся на устройстве." : "Служба передачи фото недоступна. Уже сохранённые снимки останутся на устройстве; попробуйте снова позже."}</small>;
 }
 
 function YandexSetup({ onConnect }: { onConnect: () => void }) {
