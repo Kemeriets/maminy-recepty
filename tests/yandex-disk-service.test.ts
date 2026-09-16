@@ -21,6 +21,7 @@ describe("синхронизация через API папки приложен�
     const path = url.searchParams.get("path") ?? "";
     requests.push({ path: url.pathname + ":" + path, method });
     if (url.hostname === "upload.example.com") return new Response(null, { status: 201 });
+    if (url.hostname === "family-photo-relay.netlify.app") return new Response(null, { status: 201 });
     if (url.hostname === "download.example.com") {
       if (downloadFailures > 0) { downloadFailures -= 1; throw new TypeError("temporary transfer failure"); }
       return Response.json(operation);
@@ -132,6 +133,15 @@ describe("синхронизация через API папки приложен�
     await uploadYandexImage({ id: "photo", kind: "cover", main: blob, thumbnail: blob, alt: "", width: 10, height: 10, createdAt: operation.createdAt });
     expect(directories).toEqual(new Set(["app:/operations", "app:/operation-metadata-v2", "app:/images"]));
     expect(requests.filter((request) => request.path.startsWith("/v1/disk/resources/upload:"))).toHaveLength(2);
+  });
+
+  it("отправляет фото через приватную службу, если она настроена, без прямой передачи в заблокированный файловый сервер", async () => {
+    vi.stubGlobal("window", { __MAMINY_RECIPES_CONFIG__: { provider: "yandex-disk", assetBase: "./", mediaProxyUrl: "https://family-photo-relay.netlify.app/media" } });
+    const { uploadYandexImage } = await import("../services/yandex-disk-service");
+    const blob = new Blob(["photo"], { type: "image/webp" });
+    await uploadYandexImage({ id: "photo", kind: "cover", main: blob, thumbnail: blob, alt: "", width: 10, height: 10, createdAt: operation.createdAt });
+    expect(requests.filter((item) => item.path.startsWith("/media/photo:") && item.method === "PUT")).toHaveLength(2);
+    expect(requests.filter((item) => item.path.startsWith("/v1/disk/resources/upload:"))).toHaveLength(0);
   });
 
   it("проверяет, что существующий ресурс действительно папка", async () => {

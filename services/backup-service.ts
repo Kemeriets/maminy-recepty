@@ -1,5 +1,5 @@
 import { strToU8, unzipSync, zipSync } from "fflate";
-import { APP_CONFIG } from "../config/app.config";
+import { APP_VERSION } from "../config/version";
 import { CURRENT_SCHEMA_VERSION, type BackupFile, type BookSnapshot, type RecipeImage } from "../types/book";
 import { cacheImageBlob, getCachedImageBlob } from "./local-store";
 
@@ -29,7 +29,7 @@ function dateStamp() {
 }
 
 export function createBackupObject(snapshot: BookSnapshot): BackupFile {
-  return { ...snapshot, schemaVersion: CURRENT_SCHEMA_VERSION, exportedAt: new Date().toISOString(), appVersion: APP_CONFIG.version };
+  return { ...snapshot, schemaVersion: CURRENT_SCHEMA_VERSION, exportedAt: new Date().toISOString(), appVersion: APP_VERSION };
 }
 
 export function downloadJsonBackup(snapshot: BookSnapshot): void {

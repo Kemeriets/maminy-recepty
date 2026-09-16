@@ -1,0 +1,7 @@
+[build]
+  command = "echo 'Only the photo relay is deployed from this repository on Netlify'"
+  publish = "relay-site"
+
+[[edge_functions]]
+  path = "/media/*"
+  function = "private-photos"

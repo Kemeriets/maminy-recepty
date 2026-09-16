@@ -4,6 +4,8 @@ export interface RecipeBookRuntimeConfig {
   provider?: RuntimeProvider;
   yandexClientId?: string;
   assetBase?: string;
+  /** Optional HTTPS edge relay for private Yandex Disk photo bytes. */
+  mediaProxyUrl?: string;
 }
 
 declare global {
@@ -18,6 +20,7 @@ export function getRuntimeConfig(): Required<RecipeBookRuntimeConfig> {
     provider: supplied?.provider ?? "sites",
     yandexClientId: supplied?.yandexClientId?.trim() || getSavedYandexClientId(),
     assetBase: supplied?.assetBase ?? "/",
+    mediaProxyUrl: supplied?.mediaProxyUrl?.trim() ?? "",
   };
 }
 

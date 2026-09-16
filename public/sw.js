@@ -1,4 +1,4 @@
-const CACHE_VERSION = "maminy-recipes-v1.3.8";
+const CACHE_VERSION = "maminy-recipes-v1.3.9";
 const IMAGE_CACHE_LIMIT_BYTES = 24 * 1024 * 1024;
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
@@ -9,6 +9,11 @@ const DISK_API = "https://cloud-api.yandex.net/v1/disk";
 function scoped(path = "") {
   return new URL(path, self.registration.scope).toString();
 }
+
+// The same public configuration is read by the page and the service worker.
+// No OAuth token is stored in, or sent to, this configuration file.
+try { importScripts(scoped("runtime-config.js")); } catch { /* Offline first launch. */ }
+const mediaProxyUrl = self.__MAMINY_RECIPES_CONFIG__?.mediaProxyUrl || "";
 
 const SHELL = [
   scoped(""),
@@ -123,6 +128,7 @@ function safeYandexDownloadUrl(value) {
 
 async function yandexImage(requestUrl, relativePath) {
   const id = decodeURIComponent(relativePath.slice("__images/".length));
+  if (!/^[a-zA-Z0-9_-]{1,100}$/.test(id)) return imagePlaceholder();
   const variant = requestUrl.searchParams.get("variant") === "thumbnail" ? "thumbnail" : "main";
   const key = `${id}:${variant}`;
   const cached = await readStore("imageCache", key).catch(() => null);
@@ -135,6 +141,22 @@ async function yandexImage(requestUrl, relativePath) {
   if (!auth?.accessToken || (auth.expiresAt && auth.expiresAt <= Date.now())) return cachedFallback(id, variant);
   let directHref = null;
   try {
+    if (mediaProxyUrl.startsWith("https://")) {
+      const relayUrl = new URL(`${encodeURIComponent(id)}?variant=${variant}`, `${mediaProxyUrl.replace(/\/$/, "")}/`);
+      try {
+        const relayResponse = await fetch(relayUrl, {
+          headers: { Authorization: `OAuth ${auth.accessToken}` },
+          cache: "no-store",
+          signal: AbortSignal.timeout(25000),
+        });
+        if (relayResponse.ok && relayResponse.headers.get("Content-Type")?.startsWith("image/")) {
+          const blob = await relayResponse.blob();
+          await writeStore("imageCache", { key, blob, updatedAt: new Date().toISOString() }).catch(() => undefined);
+          await pruneImageCache().catch(() => undefined);
+          return new Response(blob, { headers: { "Content-Type": blob.type || "image/webp", "Cache-Control": "no-store" } });
+        }
+      } catch { /* The original direct transport remains available if the relay is temporarily down. */ }
+    }
     const suffix = variant === "thumbnail" ? "-thumb" : "";
     const params = new URLSearchParams({ path: `app:/images/${id}${suffix}.webp` });
     const linkResponse = await fetch(`${DISK_API}/resources/download?${params}`, { headers: { Authorization: `OAuth ${auth.accessToken}`, Accept: "application/json" } });

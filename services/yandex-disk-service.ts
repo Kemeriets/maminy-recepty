@@ -141,9 +141,21 @@ async function requestTransfer(kind: "upload" | "download", path: string): Promi
   return readResponseJson<{ href: string; method?: string }>(response, 25000, "transfer");
 }
 
-async function uploadBlob(path: string, blob: Blob): Promise<void> {
+async function uploadBlob(path: string, blob: Blob, imageId: string, variant: "main" | "thumbnail"): Promise<void> {
   // The very first sync can contain queued recipes/photos before any cloud read.
   await ensureYandexBookFolders();
+  const relay = getRuntimeConfig().mediaProxyUrl;
+  if (relay) {
+    if (!/^[a-zA-Z0-9_-]{1,100}$/u.test(imageId) || !relay.startsWith("https://")) throw new Error("Некорректный адрес синхронизации фотографий");
+    const endpoint = new URL(`${encodeURIComponent(imageId)}?variant=${variant}`, `${relay.replace(/\/$/u, "")}/`);
+    const response = await fetchWithTimeout(endpoint, {
+      method: "PUT",
+      headers: { Authorization: `OAuth ${await activeToken()}`, "Content-Type": blob.type || "image/webp" },
+      body: blob,
+    }, 60000, "upload");
+    if (!response.ok) throw new YandexDiskError("Не удалось загрузить фотографию в облако", response.status);
+    return;
+  }
   const transfer = await requestTransfer("upload", path);
   const response = await fetchWithTimeout(transfer.href, { method: transfer.method || "PUT", body: blob }, 45000, "upload");
   if (!response.ok) throw new YandexDiskError("Не удалось загрузить файл на Яндекс Диск", response.status);
@@ -244,8 +256,8 @@ export async function uploadYandexImage(image: PendingImage): Promise<RecipeImag
     cacheImageBlob(image.id, "main", image.main),
     cacheImageBlob(image.id, "thumbnail", image.thumbnail),
   ]);
-  await uploadBlob(`${IMAGES_DIR}/${image.id}.webp`, image.main);
-  await uploadBlob(`${IMAGES_DIR}/${image.id}-thumb.webp`, image.thumbnail);
+  await uploadBlob(`${IMAGES_DIR}/${image.id}.webp`, image.main, image.id, "main");
+  await uploadBlob(`${IMAGES_DIR}/${image.id}-thumb.webp`, image.thumbnail, image.id, "thumbnail");
   return {
     id: image.id,
     kind: image.kind,

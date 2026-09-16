@@ -4,6 +4,7 @@ import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useRef, useSt
 import { ArchiveRestore, BookOpen, ChefHat, ChevronRight, Cloud, CloudOff, Dices, Heart, Menu, Plus, Search, Settings, ShoppingBasket, SlidersHorizontal, Sparkles, Trash2, UtensilsCrossed, WifiOff, X } from "lucide-react";
 import { toast } from "sonner";
 import { APP_CONFIG } from "../config/app.config";
+import { APP_VERSION } from "../config/version";
 import { BookProvider, useBook, type SyncState } from "../features/book/book-context";
 import { filterRecipes, mergeShoppingIngredients } from "../features/book/logic";
 import { nowIso } from "../lib/ids";
@@ -109,7 +110,7 @@ function BookExperience({ initialView, initialRecipeId }: { initialView: Initial
         setUpdateReady(registration);
         registration.waiting.postMessage({ type: "SKIP_WAITING" });
       } else {
-        toast.success("Установлена актуальная версия", { description: `Версия ${APP_CONFIG.version}` });
+        toast.success("Установлена актуальная версия", { description: `Версия ${APP_VERSION}` });
       }
     } catch {
       toast.error("Не удалось проверить обновление", { description: "Проверьте интернет и попробуйте ещё раз." });

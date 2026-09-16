@@ -8,11 +8,12 @@ import { Input } from "./ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "./ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "./ui/alert-dialog";
 import { APP_CONFIG } from "../config/app.config";
+import { APP_VERSION } from "../config/version";
 import { downloadJsonBackup, downloadPhotoTransferZip, downloadZipBackup, recoverPhotoCacheFromZip } from "../services/backup-service";
 import { createId, nowIso } from "../lib/ids";
 import { useBook } from "../features/book/book-context";
 import type { BookOperationInput, BookSnapshot, Category } from "../types/book";
-import { runtimeAssetUrl, saveYandexClientId } from "../services/runtime-config";
+import { getRuntimeConfig, runtimeAssetUrl, saveYandexClientId } from "../services/runtime-config";
 import { clearCachedImages } from "../services/local-store";
 import { estimateBrowserStorage, formatBytes } from "../services/storage-service";
 
@@ -34,6 +35,7 @@ export function SettingsPage({ snapshot, onNavigateImport, onNavigateTrash, onPe
   const [cloudBusy, setCloudBusy] = useState(false);
   const deletedCount = snapshot.recipes.filter((recipe) => recipe.deletedAt).length;
   const demoCount = snapshot.recipes.filter((recipe) => recipe.isDemo).length;
+  const automaticPhotos = Boolean(getRuntimeConfig().mediaProxyUrl);
   const fullBackup = async () => {
     setZipLoading(true);
     try { await downloadZipBackup(snapshot); toast.success("Резервная копия скачана"); }
@@ -87,7 +89,8 @@ export function SettingsPage({ snapshot, onNavigateImport, onNavigateTrash, onPe
               <small>Для первого подключения владелец сайта один раз создаёт приложение в Яндексе. Это не требует собственного сервера.</small>
               <YandexSetup onConnect={connectCloud} />
             </> : cloudConnected ? <>
-              <p>{syncState === "synced" ? "Тексты рецептов синхронизированы с приватной папкой приложения на Яндекс Диске. Фото загружаются отдельно при просмотре." : "Вход через Яндекс выполнен. Неотправленные изменения остаются на устройстве до успешной синхронизации."} На другом устройстве откройте этот сайт и войдите в тот же аккаунт Яндекса. Подойдёт мобильный интернет, Wi‑Fi не нужен.</p>
+              <p>{syncState === "synced" ? automaticPhotos ? "Рецепты и фотографии хранятся в приватной папке приложения на Яндекс Диске. Фото появляются на другом устройстве при открытии рецепта." : "Тексты рецептов синхронизированы. Передача фотографий между устройствами пока требует настройки фото-сервиса владельцем сайта." : "Вход через Яндекс выполнен. Неотправленные изменения остаются на устройстве до успешной синхронизации."} На другом устройстве откройте этот сайт и войдите в тот же аккаунт Яндекса. Подойдёт мобильный интернет, Wi‑Fi не нужен.</p>
+              {automaticPhotos && <PhotoRelayStatus />}
               <div className="settings-actions"><Button onClick={() => void syncCloud()} disabled={cloudBusy}>{cloudBusy ? <Loader2 className="animate-spin" /> : <RefreshCw />} Синхронизировать</Button>
                 <AlertDialog><AlertDialogTrigger asChild><Button variant="outline" disabled={cloudBusy}>Отключить</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Отключить синхронизацию?</AlertDialogTitle><AlertDialogDescription>Рецепты на устройстве и Яндекс Диске останутся. Новые изменения не будут передаваться между устройствами до повторного подключения.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Отмена</AlertDialogCancel><AlertDialogAction onClick={() => void disconnect()}>Отключить</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
               </div><small role="status">{syncState === "error" ? `Синхронизация не завершена. Изменений в очереди: ${pendingCount}` : syncState === "offline" ? "Нет интернета. Отправка продолжится после подключения." : pendingCount ? `Изменений в очереди: ${pendingCount}` : "Нет изменений в очереди отправки"}</small>
@@ -100,7 +103,7 @@ export function SettingsPage({ snapshot, onNavigateImport, onNavigateTrash, onPe
           </div>
         </section>
         <StorageInfo cloudConnected={cloudConnected} />
-        <section className="settings-card settings-card--important"><div className="settings-card__icon"><Archive /></div><div><h2>Резервная копия</h2><p>Скачивайте копию после важных изменений. Она позволит восстановить рецепты независимо от сайта и синхронизации.</p><div className="settings-actions"><Button onClick={textBackup} variant="outline"><Download /> Только рецепты · JSON</Button><Button onClick={() => void fullBackup()} disabled={zipLoading}>{zipLoading ? <Loader2 className="animate-spin" /> : <PackageOpen />} Рецепты и фото · ZIP</Button></div><small>Для полного переноса выбирайте ZIP. JSON содержит тексты и ссылки на фотографии, но не сами файлы. Очистка данных сайта или приватный режим могут удалить локальные рецепты.</small>{cloudProvider === "yandex-disk" && <div className="photo-recovery"><strong>Не видны фото на телефоне?</strong><p>На компьютере, где фото открываются, нажмите «Скачать фото для телефона» и передайте полученный ZIP на телефон. Затем загрузите его здесь. Архив перенесёт доступные на компьютере снимки, не меняя рецепты и облако. Это не полная резервная копия книги.</p><div className="settings-actions"><Button variant="outline" disabled={photosExporting} onClick={() => void exportPhotos()}>{photosExporting ? <Loader2 className="animate-spin" /> : <Download />} Скачать фото для телефона</Button><input ref={photoFileInput} type="file" accept=".zip,application/zip" className="sr-only" aria-label="Выберите ZIP с фотографиями" onChange={(event) => void recoverPhotos(event.target.files?.[0])} /><Button variant="outline" disabled={photosLoading} onClick={() => photoFileInput.current?.click()}>{photosLoading ? <Loader2 className="animate-spin" /> : <FolderOpen />} Загрузить фото из ZIP</Button></div></div>}</div></section>
+        <section className="settings-card settings-card--important"><div className="settings-card__icon"><Archive /></div><div><h2>Резервная копия</h2><p>Скачивайте копию после важных изменений. Она позволит восстановить рецепты независимо от сайта и синхронизации.</p><div className="settings-actions"><Button onClick={textBackup} variant="outline"><Download /> Только рецепты · JSON</Button><Button onClick={() => void fullBackup()} disabled={zipLoading}>{zipLoading ? <Loader2 className="animate-spin" /> : <PackageOpen />} Рецепты и фото · ZIP</Button></div><small>Для полного переноса выбирайте ZIP. JSON содержит тексты и ссылки на фотографии, но не сами файлы. Очистка данных сайта или приватный режим могут удалить локальные рецепты.</small>{cloudProvider === "yandex-disk" && !automaticPhotos && <div className="photo-recovery"><strong>Не видны фото на телефоне?</strong><p>Пока фото-сервис не подключён, можно перенести доступные на компьютере фотографии ZIP-архивом. Это временный перенос, а не автоматическая синхронизация.</p><div className="settings-actions"><Button variant="outline" disabled={photosExporting} onClick={() => void exportPhotos()}>{photosExporting ? <Loader2 className="animate-spin" /> : <Download />} Скачать фото для телефона</Button><input ref={photoFileInput} type="file" accept=".zip,application/zip" className="sr-only" aria-label="Выберите ZIP с фотографиями" onChange={(event) => void recoverPhotos(event.target.files?.[0])} /><Button variant="outline" disabled={photosLoading} onClick={() => photoFileInput.current?.click()}>{photosLoading ? <Loader2 className="animate-spin" /> : <FolderOpen />} Загрузить фото из ZIP</Button></div></div>}</div></section>
         <button className="settings-row" type="button" onClick={onNavigateImport}><span className="settings-row__icon"><RotateCcw /></span><span><strong>Импорт и восстановление</strong><small>Загрузить много рецептов или резервную копию</small></span><ChevronRight /></button>
         <ManageCategories items={snapshot.categories} bookId={snapshot.book.id} onPerform={onPerform} />
         <button className="settings-row" type="button" onClick={onNavigateTrash}><span className="settings-row__icon"><Trash2 /></span><span><strong>Корзина</strong><small>{deletedCount ? `Удалённых рецептов: ${deletedCount}` : "Корзина пуста"}</small></span><ChevronRight /></button>
@@ -112,12 +115,27 @@ export function SettingsPage({ snapshot, onNavigateImport, onNavigateTrash, onPe
           <section><h3>Поделиться и удалить</h3><p>«Поделиться» отправляет полный текст рецепта, не открывая доступ к остальной книге. Удалённые рецепты сначала попадают в корзину, откуда их можно вернуть.</p></section>
         </div></DialogContent></Dialog>
         <section className="settings-card install-card"><div className="settings-card__icon"><Smartphone /></div><div><h2>Установить на телефон</h2><p>Приложение появится на главном экране и будет открываться без строки браузера.</p>{onInstall ? <Button onClick={() => void onInstall()}>Установить приложение</Button> : <ol><li>Откройте меню Chrome ⋮</li><li>Выберите «Установить приложение» или «Добавить на главный экран»</li></ol>}</div></section>
-        <button className="settings-row" type="button" onClick={() => void onCheckUpdate()}><span className="settings-row__icon"><RefreshCw /></span><span><strong>Проверить обновление</strong><small>Сейчас установлена версия {APP_CONFIG.version}</small></span><ChevronRight /></button>
+        <button className="settings-row" type="button" onClick={() => void onCheckUpdate()}><span className="settings-row__icon"><RefreshCw /></span><span><strong>Проверить обновление</strong><small>Сейчас установлена версия {APP_VERSION}</small></span><ChevronRight /></button>
         {demoCount > 0 && <AlertDialog><AlertDialogTrigger asChild><button className="settings-row settings-row--danger" type="button"><span className="settings-row__icon"><Trash2 /></span><span><strong>Удалить демонстрационные рецепты</strong><small>Примеров: {demoCount}. Ваши рецепты останутся.</small></span><ChevronRight /></button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Удалить все примеры?</AlertDialogTitle><AlertDialogDescription>Шарлотка, борщ и другие демонстрационные рецепты исчезнут. Собственные рецепты останутся.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Оставить</AlertDialogCancel><AlertDialogAction variant="destructive" onClick={() => void onPerform({ type: "demo.clear" }).catch(() => toast.error("Не удалось удалить примеры"))}>Удалить примеры</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>}
       </div>
-      <footer className="settings-footer"><Info /><span>{APP_CONFIG.appName} · версия {APP_CONFIG.version}</span>{cloudProvider === "sites" && <a href="/signout-with-chatgpt?return_to=/" target="_top"><LogOut /> Выйти</a>}</footer>
+      <footer className="settings-footer"><Info /><span>{APP_CONFIG.appName} · версия {APP_VERSION}</span>{cloudProvider === "sites" && <a href="/signout-with-chatgpt?return_to=/" target="_top"><LogOut /> Выйти</a>}</footer>
     </section>
   );
+}
+
+function PhotoRelayStatus() {
+  const [status, setStatus] = useState<"checking" | "available" | "unavailable">("checking");
+  useEffect(() => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 9000);
+    const url = `${getRuntimeConfig().mediaProxyUrl.replace(/\/$/u, "")}/health`;
+    void fetch(url, { signal: controller.signal, cache: "no-store" })
+      .then((response) => setStatus(response.ok ? "available" : "unavailable"))
+      .catch(() => setStatus("unavailable"))
+      .finally(() => clearTimeout(timeout));
+    return () => { controller.abort(); clearTimeout(timeout); };
+  }, []);
+  return <small role="status">{status === "checking" ? "Проверяем связь со службой фотографий…" : status === "available" ? "Служба передачи фото доступна. Фотографии загружаются по мере просмотра." : "Служба передачи фото недоступна. Уже сохранённые снимки останутся на устройстве; попробуйте снова позже."}</small>;
 }
 
 function YandexSetup({ onConnect }: { onConnect: () => void }) {
