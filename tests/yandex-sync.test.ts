@@ -4,26 +4,28 @@ import type { BookOperation, RecipeImage } from "../types/book";
 import { createDemoSnapshot } from "../features/book/demo-data";
 import { HybridRecipeRepository } from "../repositories/recipe-repository";
 import { cacheRemoteOperation, clearLocalBookData, getLocalSnapshot, listPendingImages, listQueuedOperations, queueOperation, savePendingImage, setLocalSnapshot } from "../services/local-store";
-import { downloadYandexOperation, isYandexConnected, listYandexOperationIds, uploadYandexImage, uploadYandexOperation } from "../services/yandex-disk-service";
+import { downloadYandexOperation, isYandexConnected, listYandexMetadataOperations, listYandexOperationIds, uploadYandexImage, uploadYandexOperation } from "../services/yandex-disk-service";
 
 vi.mock("../services/yandex-disk-service", () => ({
   beginYandexLogin: vi.fn(), consumeYandexOAuthCallback: vi.fn(), disconnectYandex: vi.fn(),
   ensureYandexBookFolders: vi.fn(), isYandexConnected: vi.fn(), isYandexReady: vi.fn(() => true),
-  downloadYandexOperation: vi.fn(), listYandexOperationIds: vi.fn(), uploadYandexImage: vi.fn(), uploadYandexOperation: vi.fn(),
+  downloadYandexOperation: vi.fn(), listYandexMetadataOperations: vi.fn(), listYandexOperationIds: vi.fn(), uploadYandexImage: vi.fn(), uploadYandexOperation: vi.fn(),
   yandexImageUrl: (id: string, variant = "main") => `https://example.ru/recipes/__images/${id}${variant === "thumbnail" ? "?variant=thumbnail" : ""}`,
 }));
 
 describe("синхронизация с Яндекс Диском", () => {
   const cloud = new Map<string, BookOperation>();
+  const legacyCloud = new Map<string, BookOperation>();
   const repository = new HybridRecipeRepository();
   beforeEach(async () => {
-    await clearLocalBookData(); vi.clearAllMocks(); cloud.clear();
+    await clearLocalBookData(); vi.clearAllMocks(); cloud.clear(); legacyCloud.clear();
     vi.stubGlobal("window", { __MAMINY_RECIPES_CONFIG__: { provider: "yandex-disk", assetBase: "./", yandexClientId: "a".repeat(32) } });
     vi.stubGlobal("document", { baseURI: "https://example.ru/recipes/" });
     vi.mocked(isYandexConnected).mockResolvedValue(true);
     vi.mocked(uploadYandexOperation).mockImplementation(async (operation) => { cloud.set(operation.opId, operation); });
-    vi.mocked(listYandexOperationIds).mockImplementation(async () => [...cloud.keys()]);
-    vi.mocked(downloadYandexOperation).mockImplementation(async (id) => cloud.get(id)!);
+    vi.mocked(listYandexMetadataOperations).mockImplementation(async () => [...cloud.values()]);
+    vi.mocked(listYandexOperationIds).mockImplementation(async () => [...legacyCloud.keys()]);
+    vi.mocked(downloadYandexOperation).mockImplementation(async (id) => legacyCloud.get(id)!);
   });
   afterEach(() => vi.unstubAllGlobals());
   const customOperation = (): BookOperation => ({ opId: "new-recipe", createdAt: "2026-09-15T00:00:00Z", type: "recipe.upsert", recipe: { ...createDemoSnapshot().recipes[0], id: "custom", title: "Мой пирог", isDemo: false } });
@@ -61,6 +63,16 @@ describe("синхронизация с Яндекс Диском", () => {
     await cacheRemoteOperation(customOperation());
     const result = await repository.refresh();
     expect(result?.recipes.some((recipe) => recipe.id === "custom")).toBe(false);
+  });
+  it("переносит старую облачную запись из проверенного локального кэша без скачивания файла", async () => {
+    const operation = customOperation();
+    legacyCloud.set(operation.opId, operation);
+    await cacheRemoteOperation(operation);
+    vi.mocked(downloadYandexOperation).mockRejectedValue(new TypeError("CDN недоступен"));
+    const result = await repository.refresh();
+    expect(result?.recipes.some((recipe) => recipe.id === "custom")).toBe(true);
+    expect(uploadYandexOperation).toHaveBeenCalledWith(expect.objectContaining({ opId: operation.opId }));
+    expect(downloadYandexOperation).not.toHaveBeenCalled();
   });
   it("не отправляет фотографию несохранённого черновика", async () => {
     const blob = new Blob(["draft"], { type: "image/webp" });

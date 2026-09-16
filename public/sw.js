@@ -1,4 +1,4 @@
-const CACHE_VERSION = "maminy-recipes-v1.3.5";
+const CACHE_VERSION = "maminy-recipes-v1.3.6";
 const IMAGE_CACHE_LIMIT_BYTES = 24 * 1024 * 1024;
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
@@ -112,6 +112,15 @@ function imagePlaceholder() {
   );
 }
 
+function safeYandexDownloadUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && (url.hostname === "downloader.disk.yandex.ru" || url.hostname.endsWith(".storage.yandex.net")) ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 async function yandexImage(requestUrl, relativePath) {
   const id = decodeURIComponent(relativePath.slice("__images/".length));
   const variant = requestUrl.searchParams.get("variant") === "thumbnail" ? "thumbnail" : "main";
@@ -124,19 +133,26 @@ async function yandexImage(requestUrl, relativePath) {
 
   const auth = await readStore("auth", "yandex").catch(() => null);
   if (!auth?.accessToken || (auth.expiresAt && auth.expiresAt <= Date.now())) return imagePlaceholder();
+  let directHref = null;
   try {
     const suffix = variant === "thumbnail" ? "-thumb" : "";
     const params = new URLSearchParams({ path: `app:/images/${id}${suffix}.webp` });
     const linkResponse = await fetch(`${DISK_API}/resources/download?${params}`, { headers: { Authorization: `OAuth ${auth.accessToken}`, Accept: "application/json" } });
     if (!linkResponse.ok) return imagePlaceholder();
     const { href } = await linkResponse.json();
-    const imageResponse = await fetch(href);
+    directHref = safeYandexDownloadUrl(href);
+    if (!directHref) return imagePlaceholder();
+    const imageResponse = await fetch(directHref);
     if (!imageResponse.ok) return imagePlaceholder();
     const blob = await imageResponse.blob();
     await writeStore("imageCache", { key, blob, updatedAt: new Date().toISOString() }).catch(() => undefined);
     await pruneImageCache().catch(() => undefined);
     return new Response(blob, { headers: { "Content-Type": blob.type || "image/webp", "Cache-Control": "no-store" } });
   } catch {
+    // Image elements can follow a cross-origin redirect without reading the
+    // response in JavaScript. This keeps cloud photos visible when Chromium
+    // refuses a programmatic fetch from Yandex's separate download service.
+    if (directHref) return Response.redirect(directHref, 302);
     return imagePlaceholder();
   }
 }

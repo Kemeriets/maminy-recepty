@@ -1,4 +1,5 @@
 import { createId } from "../lib/ids";
+import { strFromU8, strToU8, unzlibSync, zlibSync } from "fflate";
 import type { BookOperation, RecipeImage } from "../types/book";
 import {
   cacheImageBlob,
@@ -12,7 +13,9 @@ import { fetchWithRetry, fetchWithTimeout, NetworkRequestError, readResponseJson
 
 const DISK_API = "https://cloud-api.yandex.net/v1/disk";
 const OPERATIONS_DIR = "app:/operations";
+const OPERATION_METADATA_DIR = "app:/operation-metadata-v2";
 const IMAGES_DIR = "app:/images";
+const METADATA_CHUNK_SIZE = 700;
 const OAUTH_STATE_KEY = "maminy-recipes-yandex-oauth-state";
 const OAUTH_RETURN_KEY = "maminy-recipes-yandex-oauth-return";
 let folderSetup: { token: string; promise: Promise<void> } | null = null;
@@ -79,11 +82,56 @@ export async function ensureYandexBookFolders(): Promise<void> {
   if (folderSetup?.token === token) return folderSetup.promise;
   const setup = { token, promise: (async () => {
     await ensureDirectory(OPERATIONS_DIR);
+    await ensureDirectory(OPERATION_METADATA_DIR);
     await ensureDirectory(IMAGES_DIR);
   })() };
   folderSetup = setup;
   try { await setup.promise; }
   catch (error) { if (folderSetup === setup) folderSetup = null; throw error; }
+}
+
+function bytesToBase64Url(bytes: Uint8Array): string {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
+}
+
+function base64UrlToBytes(value: string): Uint8Array {
+  const standard = value.replaceAll("-", "+").replaceAll("_", "/");
+  const binary = atob(standard + "=".repeat((4 - standard.length % 4) % 4));
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+function encodeOperation(operation: BookOperation): string {
+  return bytesToBase64Url(zlibSync(strToU8(JSON.stringify(operation)), { level: 9 }));
+}
+
+function decodeOperation(value: string): BookOperation {
+  const operation = JSON.parse(strFromU8(unzlibSync(base64UrlToBytes(value)))) as unknown;
+  if (!operation || typeof operation !== "object" || !("opId" in operation) || !("type" in operation)) throw new Error("Повреждена запись синхронизации");
+  return operation as BookOperation;
+}
+
+function metadataChunkPath(opId: string, index: number): string {
+  const safeName = opId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  return `${OPERATION_METADATA_DIR}/m2-${safeName}-${index.toString(36).padStart(3, "0")}`;
+}
+
+async function writeOperationMetadata(operation: BookOperation): Promise<void> {
+  await ensureYandexBookFolders();
+  const encoded = encodeOperation(operation);
+  const chunks = Array.from({ length: Math.ceil(encoded.length / METADATA_CHUNK_SIZE) }, (_, index) => encoded.slice(index * METADATA_CHUNK_SIZE, (index + 1) * METADATA_CHUNK_SIZE));
+  if (!chunks.length || chunks.length > 200) throw new Error("Запись рецепта слишком велика для синхронизации");
+  for (let index = 0; index < chunks.length; index += 1) {
+    const path = metadataChunkPath(operation.opId, index);
+    await ensureDirectory(path);
+    await diskRequest(`/resources?${query({ path })}`, {
+      method: "PATCH",
+      body: JSON.stringify({ custom_properties: { v: "2", op: operation.opId, i: String(index), n: String(chunks.length), p: chunks[index] } }),
+    });
+  }
 }
 
 async function requestTransfer(kind: "upload" | "download", path: string): Promise<{ href: string; method?: string }> {
@@ -123,12 +171,11 @@ async function downloadJson(path: string): Promise<unknown> {
 }
 
 export async function uploadYandexOperation(operation: BookOperation): Promise<void> {
-  const safeName = operation.opId.replace(/[^a-zA-Z0-9_-]/g, "_");
-  await uploadBlob(`${OPERATIONS_DIR}/${safeName}.json`, new Blob([JSON.stringify(operation)], { type: "application/json" }));
+  await writeOperationMetadata(operation);
 }
 
 interface DiskResourceList {
-  _embedded?: { items?: Array<{ name?: string; type?: string }> };
+  _embedded?: { items?: Array<{ name?: string; type?: string; custom_properties?: Record<string, unknown> }> };
 }
 
 export async function listYandexOperationIds(): Promise<string[]> {
@@ -144,6 +191,40 @@ export async function listYandexOperationIds(): Promise<string[]> {
     offset += limit;
   }
   return result;
+}
+
+export async function listYandexMetadataOperations(): Promise<BookOperation[]> {
+  await ensureYandexBookFolders();
+  const groups = new Map<string, { total: number; chunks: Map<number, string> }>();
+  let offset = 0;
+  const limit = 1000;
+  while (true) {
+    const response = await diskRequest(`/resources?${query({ path: OPERATION_METADATA_DIR, limit, offset, fields: "_embedded.items.name,_embedded.items.type,_embedded.items.custom_properties" })}`);
+    const body = await readResponseJson<DiskResourceList>(response, 20000, "api");
+    const items = body._embedded?.items ?? [];
+    for (const item of items) {
+      const properties = item.custom_properties;
+      if (item.type !== "dir" || properties?.v !== "2" || typeof properties.op !== "string" || typeof properties.i !== "string" || typeof properties.n !== "string" || typeof properties.p !== "string") continue;
+      const index = Number(properties.i);
+      const total = Number(properties.n);
+      if (!Number.isSafeInteger(index) || !Number.isSafeInteger(total) || index < 0 || total < 1 || total > 200 || index >= total || properties.op.length > 160 || properties.p.length > METADATA_CHUNK_SIZE || !/^[A-Za-z0-9_-]+$/u.test(properties.p)) continue;
+      const group = groups.get(properties.op) ?? { total, chunks: new Map<number, string>() };
+      if (group.total !== total) continue;
+      group.chunks.set(index, properties.p);
+      groups.set(properties.op, group);
+    }
+    if (items.length < limit) break;
+    offset += limit;
+  }
+  const operations: BookOperation[] = [];
+  for (const [opId, group] of groups) {
+    if (group.chunks.size !== group.total) continue;
+    const encoded = Array.from({ length: group.total }, (_, index) => group.chunks.get(index) ?? "").join("");
+    const operation = decodeOperation(encoded);
+    if (operation.opId !== opId) throw new Error("Повреждена запись синхронизации");
+    operations.push(operation);
+  }
+  return operations;
 }
 
 export async function downloadYandexOperation(opId: string): Promise<BookOperation> {

@@ -49,6 +49,7 @@ export default defineConfig({
   root: fileURLToPath(new URL("./portable", import.meta.url)),
   base: "./",
   publicDir: fileURLToPath(new URL("./public", import.meta.url)),
+  resolve: { alias: { "@": projectRoot } },
   plugins: [react(), portableMetadata()],
   server: { host: "0.0.0.0", allowedHosts: ["terminal.local"] },
   preview: { host: "0.0.0.0", allowedHosts: ["terminal.local"] },

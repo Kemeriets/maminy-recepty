@@ -3,7 +3,6 @@ import { createDemoSnapshot } from "../features/book/demo-data";
 import { createId, nowIso } from "../lib/ids";
 import {
   cacheRemoteOperation,
-  hasRemoteOperation,
   getLocalSnapshot,
   listPendingImages,
   listQueuedOperations,
@@ -23,6 +22,7 @@ import {
   ensureYandexBookFolders,
   isYandexConnected,
   isYandexReady,
+  listYandexMetadataOperations,
   listYandexOperationIds,
   uploadYandexImage,
   uploadYandexOperation,
@@ -103,18 +103,49 @@ function normalizeYandexOperation(operation: BookOperation): BookOperation {
 
 async function fetchYandexSnapshot(): Promise<BookSnapshot> {
   await ensureYandexBookFolders();
-  const ids = await listYandexOperationIds();
-  // Fetch new immutable operation files in small batches, not one long chain.
-  for (let offset = 0; offset < ids.length; offset += 2) {
-    await Promise.all(ids.slice(offset, offset + 2).map(async (id) => {
-    if (await hasRemoteOperation(id)) return;
-    const operation = normalizeYandexOperation(await downloadYandexOperation(id));
-    await cacheRemoteOperation(operation);
-    }));
+  const [legacyIds, metadataOperations, cachedOperations] = await Promise.all([
+    listYandexOperationIds(),
+    listYandexMetadataOperations(),
+    listRemoteOperations(),
+  ]);
+  const legacyIdSet = new Set(legacyIds);
+  const cachedById = new Map(cachedOperations.map((operation) => [operation.opId, operation]));
+  const operationById = new Map(metadataOperations.map((operation) => {
+    const normalized = normalizeYandexOperation(operation);
+    return [normalized.opId, normalized] as const;
+  }));
+
+  // Devices that created operations using the old file transport still have
+  // verified local copies. Publish those copies through API metadata so every
+  // other browser can read them without contacting Yandex's download CDN.
+  for (const cached of cachedOperations) {
+    if (!legacyIdSet.has(cached.opId) || operationById.has(cached.opId)) continue;
+    const normalized = normalizeYandexOperation(cached);
+    await uploadYandexOperation(normalized);
+    operationById.set(normalized.opId, normalized);
   }
-  const currentIds = new Set(ids);
-  // A different account must never inherit the previous account's operation cache.
-  const operations = (await listRemoteOperations()).filter((operation) => currentIds.has(operation.opId)).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.opId.localeCompare(b.opId));
+
+  for (const operation of operationById.values()) await cacheRemoteOperation(operation);
+
+  // Compatibility fallback for a legacy operation that has not yet been
+  // migrated by its original device. A successful read immediately upgrades it.
+  for (const id of legacyIds) {
+    if (operationById.has(id)) continue;
+    const cached = cachedById.get(id);
+    if (cached) {
+      const normalized = normalizeYandexOperation(cached);
+      await uploadYandexOperation(normalized);
+      await cacheRemoteOperation(normalized);
+      operationById.set(id, normalized);
+      continue;
+    }
+    const operation = normalizeYandexOperation(await downloadYandexOperation(id));
+    await uploadYandexOperation(operation);
+    await cacheRemoteOperation(operation);
+    operationById.set(id, operation);
+  }
+
+  const operations = [...operationById.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.opId.localeCompare(b.opId));
   let snapshot = createDemoSnapshot("yandex-family");
   for (const operation of operations) snapshot = applyOperation(snapshot, operation);
   return { ...snapshot, syncedAt: nowIso() };
