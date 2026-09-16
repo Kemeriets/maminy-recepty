@@ -8,7 +8,7 @@ import {
   type PendingImage,
 } from "./local-store";
 import { getRuntimeConfig, runtimeAssetUrl } from "./runtime-config";
-import { fetchWithTimeout } from "./http";
+import { fetchWithRetry, fetchWithTimeout, NetworkRequestError, readResponseJson } from "./http";
 
 const DISK_API = "https://cloud-api.yandex.net/v1/disk";
 const OPERATIONS_DIR = "app:/operations";
@@ -36,14 +36,21 @@ async function activeToken(): Promise<string> {
 
 async function diskRequest(path: string, init?: RequestInit): Promise<Response> {
   const token = await activeToken();
-  const response = await fetchWithTimeout(`${DISK_API}${path}`, {
+  const response = await fetchWithRetry(`${DISK_API}${path}`, {
     ...init,
     headers: { Accept: "application/json", "Content-Type": "application/json", Authorization: `OAuth ${token}`, ...init?.headers },
   });
   if (!response.ok) {
     if (response.status === 401 || response.status === 404) folderSetup = null;
     if (response.status === 401) await clearCloudAuth();
-    const body = await response.json().catch(() => ({})) as { message?: string; error?: string };
+    let body: { message?: string; error?: string } = {};
+    try {
+      body = await readResponseJson<{ message?: string; error?: string }>(response, 20000, "api");
+    } catch (error) {
+      // Preserve a genuine stalled/failed response as a network diagnostic;
+      // malformed error payloads still become a safe generic HTTP error.
+      if (error instanceof NetworkRequestError) throw error;
+    }
     throw new YandexDiskError(body.message || "Яндекс Диск временно недоступен", response.status, body.error);
   }
   return response;
@@ -62,7 +69,7 @@ async function ensureDirectory(path: string): Promise<void> {
     if (!(error instanceof YandexDiskError) || error.status !== 409) throw error;
     // A conflicting file must not be mistaken for a usable directory.
     const response = await diskRequest(`/resources?${query({ path, fields: "type" })}`);
-    const resource = await response.json() as { type?: string };
+    const resource = await readResponseJson<{ type?: string }>(response, 20000, "api");
     if (resource.type !== "dir") throw new YandexDiskError("Вместо папки книги на Диске находится файл", 409, "DiskExpectedDirectoryError");
   }
 }
@@ -83,22 +90,22 @@ async function requestTransfer(kind: "upload" | "download", path: string): Promi
   const values: Record<string, string | boolean> = { path };
   if (kind === "upload") values.overwrite = true;
   const response = await diskRequest(`/resources/${kind}?${query(values)}`);
-  return response.json() as Promise<{ href: string; method?: string }>;
+  return readResponseJson<{ href: string; method?: string }>(response, 25000, "transfer");
 }
 
 async function uploadBlob(path: string, blob: Blob): Promise<void> {
   // The very first sync can contain queued recipes/photos before any cloud read.
   await ensureYandexBookFolders();
   const transfer = await requestTransfer("upload", path);
-  const response = await fetchWithTimeout(transfer.href, { method: transfer.method || "PUT", body: blob }, 45000);
+  const response = await fetchWithTimeout(transfer.href, { method: transfer.method || "PUT", body: blob }, 45000, "upload");
   if (!response.ok) throw new YandexDiskError("Не удалось загрузить файл на Яндекс Диск", response.status);
 }
 
 async function downloadJson(path: string): Promise<unknown> {
   const transfer = await requestTransfer("download", path);
-  const response = await fetchWithTimeout(transfer.href, { cache: "no-store" });
+  const response = await fetchWithRetry(transfer.href, { cache: "no-store" }, 30000, "download");
   if (!response.ok) throw new YandexDiskError("Не удалось прочитать файл с Яндекс Диска", response.status);
-  return response.json();
+  return readResponseJson(response, 30000, "download");
 }
 
 export async function uploadYandexOperation(operation: BookOperation): Promise<void> {
@@ -116,7 +123,7 @@ export async function listYandexOperationIds(): Promise<string[]> {
   const limit = 1000;
   while (true) {
     const response = await diskRequest(`/resources?${query({ path: OPERATIONS_DIR, limit, offset, fields: "_embedded.items.name,_embedded.items.type" })}`);
-    const body = await response.json() as DiskResourceList;
+    const body = await readResponseJson<DiskResourceList>(response, 20000, "api");
     const items = body._embedded?.items ?? [];
     for (const item of items) if (item.type === "file" && item.name?.endsWith(".json")) result.push(item.name.slice(0, -5));
     if (items.length < limit) break;

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { describeSyncError } from "../services/sync-error";
+import { NetworkRequestError } from "../services/http";
 import { YandexDiskError } from "../services/yandex-disk-service";
 
 describe("понятные и безопасные ошибки синхронизации", () => {
@@ -19,7 +20,8 @@ describe("понятные и безопасные ошибки синхрони
     expect(JSON.stringify(issue)).not.toContain("secret");
   });
   it("различает сеть, тайм-аут и повреждённый JSON", () => {
-    expect(describeSyncError(new TypeError("Failed to fetch")).kind).toBe("network");
+    expect(describeSyncError(new NetworkRequestError("api", false, new TypeError("Failed to fetch"))).kind).toBe("network");
+    expect(describeSyncError(new TypeError("случайная ошибка кода")).kind).toBe("unknown");
     expect(describeSyncError(new DOMException("timed out", "AbortError")).kind).toBe("timeout");
     expect(describeSyncError(new SyntaxError("invalid JSON")).kind).toBe("data");
   });

@@ -65,11 +65,9 @@ export function BookProvider({ children }: { children: React.ReactNode }) {
       setSyncIssue(null);
       return false;
     }
-    if (!navigator.onLine) {
-      setSyncState("offline");
-      setSyncIssue(null);
-      return false;
-    }
+    // `navigator.onLine` is only a hint and can be false on Android while
+    // mobile data is usable. A manual refresh must always try the API; a
+    // real fetch failure is classified below and local changes stay queued.
     setSyncState("syncing");
     setSyncIssue(null);
     try {
@@ -107,7 +105,7 @@ export function BookProvider({ children }: { children: React.ReactNode }) {
         else if (repository.provider() === "local" || (repository.provider() === "yandex-disk" && !connected)) setSyncState("local");
         else setSyncState(remote ? "synced" : "syncing");
         if (loggedIn) toast.success("Яндекс Диск подключён", { description: "Синхронизируем рецепты." });
-        if (navigator.onLine && (repository.provider() === "sites" || connected)) await refresh();
+        if (repository.provider() === "sites" || connected) await refresh();
       } catch (value) {
         if (!active) return;
         setLoading(false);

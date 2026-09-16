@@ -8,7 +8,7 @@ export const APP_CONFIG = {
   dedicationText:
     "Добавляйте рецепты, находите нужное блюдо и готовьте в удобном режиме.",
   showGiftIntro: false,
-  version: "1.3.2",
+  version: "1.3.3",
   theme: {
     primary: "#6c2737",
     primaryDark: "#4b1825",

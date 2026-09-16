@@ -1,4 +1,5 @@
 import { YandexDiskError } from "./yandex-disk-service";
+import { NetworkRequestError } from "./http";
 
 export interface SyncIssue {
   kind: "auth" | "permission" | "quota" | "rate-limit" | "service" | "network" | "timeout" | "data" | "local" | "unknown";
@@ -9,6 +10,29 @@ export interface SyncIssue {
 
 // Never display request URLs, OAuth credentials, or arbitrary server messages.
 export function describeSyncError(value: unknown): SyncIssue {
+  let networkError: NetworkRequestError | null = null;
+  let candidate = value;
+  for (let depth = 0; depth < 6 && candidate instanceof Error; depth++) {
+    if (candidate instanceof NetworkRequestError) { networkError = candidate; break; }
+    candidate = candidate.cause;
+  }
+  if (networkError) {
+    const diagnostic = `NET_${networkError.stage.toUpperCase()}_${networkError.timedOut ? "TIMEOUT" : "FAILED"}`;
+    if (networkError.timedOut) {
+      return {
+        kind: "timeout",
+        message: "Яндекс Диск не ответил вовремя.",
+        help: "Подойдёт мобильный интернет или Wi‑Fi. Повторите попытку: короткий обрыв связи не должен потерять изменения.",
+        diagnostic,
+      };
+    }
+    return {
+      kind: "network",
+      message: "Не удалось связаться с Яндекс Диском.",
+      help: "Подойдёт мобильный интернет или Wi‑Fi. Проверьте, что мобильные данные разрешены для браузера, и повторите попытку. Изменения остались на устройстве.",
+      diagnostic,
+    };
+  }
   let error = value;
   for (let depth = 0; depth < 5 && error instanceof Error && error.cause; depth++) error = error.cause;
   if (error instanceof YandexDiskError) {
@@ -24,7 +48,7 @@ export function describeSyncError(value: unknown): SyncIssue {
   }
   if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) return { kind: "timeout", message: "Яндекс Диск не ответил вовремя.", help: "Проверьте соединение и повторите попытку. Рецепты и очередь отправки сохранены." };
   if (error instanceof Error && error.name === "QuotaExceededError") return { kind: "local", message: "На устройстве не хватает места для сохранения.", help: "Скачайте резервную копию и освободите место на телефоне. Не очищайте данные сайта: в них могут быть неотправленные изменения." };
-  if (error instanceof TypeError) return { kind: "network", message: "Не удалось связаться с Яндекс Диском.", help: "Проверьте интернет. Если другие сайты открываются, доступ к API Диска может ограничиваться сетью или браузером. Изменения остались на устройстве." };
+  // A bare TypeError may be a programming error; only the fetch wrapper above is a network failure.
   if (error instanceof SyntaxError || (error instanceof Error && error.message === "Повреждена запись синхронизации")) return { kind: "data", message: "Не удалось прочитать одну из записей книги.", help: "Локальная книга сохранена. Скачайте резервную копию и сообщите разработчику об ошибке." };
   return { kind: "unknown", message: "Не удалось выполнить синхронизацию.", help: "Изменения остались на устройстве. Повторите попытку; если ошибка остаётся, сообщите разработчику." };
 }
