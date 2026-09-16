@@ -153,7 +153,11 @@ async function uploadBlob(path: string, blob: Blob, imageId: string, variant: "m
       headers: { Authorization: `OAuth ${await activeToken()}`, "Content-Type": blob.type || "image/webp" },
       body: blob,
     }, 60000, "upload");
-    if (!response.ok) throw new YandexDiskError("Не удалось загрузить фотографию в облако", response.status);
+    if (!response.ok) {
+      const stage = response.headers.get("X-Photo-Relay-Stage");
+      const code = stage === "signed-link" ? "PhotoRelayLinkError" : stage === "transfer" ? "PhotoRelayTransferError" : stage === "disk-api" ? "PhotoRelayApiError" : "PhotoRelayServerError";
+      throw new YandexDiskError("Не удалось загрузить фотографию в облако", response.status, code);
+    }
     return;
   }
   const transfer = await requestTransfer("upload", path);

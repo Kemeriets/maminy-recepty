@@ -14,6 +14,7 @@ describe("синхронизация через API папки приложен�
   let conflictingFile = false;
   let downloadFailures = 0;
   let downloadLinks = 0;
+  let relayStage: string | null = null;
 
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
@@ -21,7 +22,9 @@ describe("синхронизация через API папки приложен�
     const path = url.searchParams.get("path") ?? "";
     requests.push({ path: url.pathname + ":" + path, method });
     if (url.hostname === "upload.example.com") return new Response(null, { status: 201 });
-    if (url.hostname === "family-photo-relay.netlify.app") return new Response(null, { status: 201 });
+    if (url.hostname === "family-photo-relay.netlify.app") return relayStage
+      ? new Response("Photo transfer failed", { status: 502, headers: { "X-Photo-Relay-Stage": relayStage } })
+      : new Response(null, { status: 201 });
     if (url.hostname === "download.example.com") {
       if (downloadFailures > 0) { downloadFailures -= 1; throw new TypeError("temporary transfer failure"); }
       return Response.json(operation);
@@ -73,6 +76,7 @@ describe("синхронизация через API папки приложен�
     conflictingFile = false;
     downloadFailures = 0;
     downloadLinks = 0;
+    relayStage = null;
     storage.getCloudAuth.mockResolvedValue({ accessToken: "fixture-token", expiresAt: null });
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("window", { __MAMINY_RECIPES_CONFIG__: { provider: "yandex-disk", assetBase: "./" } });
@@ -142,6 +146,14 @@ describe("синхронизация через API папки приложен�
     await uploadYandexImage({ id: "photo", kind: "cover", main: blob, thumbnail: blob, alt: "", width: 10, height: 10, createdAt: operation.createdAt });
     expect(requests.filter((item) => item.path.startsWith("/media/photo:") && item.method === "PUT")).toHaveLength(2);
     expect(requests.filter((item) => item.path.startsWith("/v1/disk/resources/upload:"))).toHaveLength(0);
+  });
+
+  it("показывает безопасный этап сбоя загрузки фото вместо общей ошибки облака", async () => {
+    relayStage = "signed-link";
+    vi.stubGlobal("window", { __MAMINY_RECIPES_CONFIG__: { provider: "yandex-disk", assetBase: "./", mediaProxyUrl: "https://family-photo-relay.netlify.app/media" } });
+    const { uploadYandexImage } = await import("../services/yandex-disk-service");
+    const blob = new Blob(["photo"], { type: "image/webp" });
+    await expect(uploadYandexImage({ id: "photo", kind: "cover", main: blob, thumbnail: blob, alt: "", width: 10, height: 10, createdAt: operation.createdAt })).rejects.toMatchObject({ status: 502, code: "PhotoRelayLinkError" });
   });
 
   it("проверяет, что существующий ресурс действительно папка", async () => {

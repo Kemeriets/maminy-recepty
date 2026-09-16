@@ -5,13 +5,15 @@ const DISK_API = "https://cloud-api.yandex.net/v1/disk";
 const MAX_PHOTO_BYTES = 4 * 1024 * 1024;
 const APP_ORIGIN = "https://kemeriets.github.io";
 
-function reply(status: number, message: string, origin: string): Response {
+function reply(status: number, message: string, origin: string, stage?: "disk-api" | "signed-link" | "transfer" | "relay"): Response {
   return new Response(message, {
     status,
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
       "Cache-Control": "no-store",
       "Access-Control-Allow-Origin": origin,
+      "Access-Control-Expose-Headers": "X-Photo-Relay-Stage",
+      ...(stage ? { "X-Photo-Relay-Stage": stage } : {}),
       Vary: "Origin",
     },
   });
@@ -30,8 +32,11 @@ function validTransferUrl(value: unknown, method: "GET" | "PUT"): URL | null {
     const url = new URL(value);
     if (url.protocol !== "https:" || (url.port && url.port !== "443") || url.username || url.password) return null;
     const hostname = url.hostname;
-    if (method === "GET" && (hostname === "downloader.disk.yandex.ru" || hostname.endsWith(".storage.yandex.net"))) return url;
-    if (method === "PUT" && (hostname === "uploader.disk.yandex.ru" || hostname.endsWith(".storage.yandex.net"))) return url;
+    // Disk rotates its numbered transfer hosts (for example
+    // uploader12g.disk.yandex.net). Only exact transfer prefixes on Yandex's
+    // Disk subdomains are allowed; URLs supplied by an outside host are not.
+    if (method === "GET" && (/^downloader[a-z0-9]*\.disk\.yandex\.(?:ru|net)$/u.test(hostname) || hostname.endsWith(".storage.yandex.net"))) return url;
+    if (method === "PUT" && (/^uploader[a-z0-9]*\.disk\.yandex\.(?:ru|net)$/u.test(hostname) || hostname.endsWith(".storage.yandex.net"))) return url;
   } catch { /* Malformed signed URL. */ }
   return null;
 }
@@ -102,13 +107,13 @@ export default async function privatePhotos(request: Request): Promise<Response>
       redirect: "error",
       signal: AbortSignal.timeout(15000),
     });
-    if (!linkResponse.ok) return reply([401, 403, 404, 429, 507].includes(linkResponse.status) ? linkResponse.status : 502, "Yandex Disk unavailable", origin);
+    if (!linkResponse.ok) return reply([401, 403, 404, 429, 507].includes(linkResponse.status) ? linkResponse.status : 502, "Yandex Disk unavailable", origin, "disk-api");
     const transfer = await linkResponse.json() as { href?: unknown; method?: unknown };
     const method = request.method as "GET" | "PUT";
     const signed = validTransferUrl(transfer.href, method);
-    if (!signed || (transfer.method && transfer.method !== method)) return reply(502, "Invalid Yandex transfer link", origin);
+    if (!signed || (transfer.method && transfer.method !== method)) return reply(502, "Invalid Yandex transfer link", origin, "signed-link");
     const fileResponse = await fetchSignedFile(signed, method, bytes, request.headers.get("Content-Type"));
-    if (!fileResponse.ok) return reply(fileResponse.status >= 400 && fileResponse.status < 500 ? fileResponse.status : 502, "Photo transfer failed", origin);
+    if (!fileResponse.ok) return reply(fileResponse.status >= 400 && fileResponse.status < 500 ? fileResponse.status : 502, "Photo transfer failed", origin, "transfer");
     if (method === "PUT") return reply(201, "saved", origin);
     const length = Number(fileResponse.headers.get("Content-Length"));
     if (length > MAX_PHOTO_BYTES) return reply(502, "Photo too large", origin);
@@ -122,6 +127,6 @@ export default async function privatePhotos(request: Request): Promise<Response>
       },
     });
   } catch {
-    return reply(502, "Photo transfer unavailable", origin);
+    return reply(502, "Photo transfer unavailable", origin, "relay");
   }
 }

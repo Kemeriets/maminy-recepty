@@ -14,6 +14,12 @@ describe("понятные и безопасные ошибки синхрони
     const cause = new YandexDiskError("secret request URL", 403, "ForbiddenError");
     expect(describeSyncError(new Error("generic error", { cause })).kind).toBe("permission");
   });
+  it("отличает отказ сервера фотографий от общего сбоя Яндекс Диска", () => {
+    const issue = describeSyncError(new Error("Не удалось загрузить фотографию", { cause: new YandexDiskError("private transfer URL", 502, "PhotoRelayLinkError") }));
+    expect(issue.message).toContain("ссылку Яндекса");
+    expect(issue.diagnostic).toBe("HTTP 502 · PhotoRelayLinkError");
+    expect(JSON.stringify(issue)).not.toContain("private transfer URL");
+  });
   it("не выводит произвольное содержимое кода ошибки", () => {
     const issue = describeSyncError(new YandexDiskError("access_token=secret", 403, "https://example.com/?access_token=secret"));
     expect(issue.diagnostic).toBe("HTTP 403");

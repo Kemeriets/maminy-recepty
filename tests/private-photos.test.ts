@@ -64,4 +64,28 @@ describe("приватная автоматическая передача фо�
     expect(requests[1].auth).toBeNull();
     expect(new TextDecoder().decode(requests[1].body as ArrayBuffer)).toBe("private-image");
   });
+
+  it("принимает нумерованные адреса загрузки Яндекса и не передаёт им OAuth-токен", async () => {
+    const hosts: Array<{ url: string; authorization: string | null }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      hosts.push({ url, authorization: new Headers(init?.headers).get("Authorization") });
+      if (url.startsWith("https://cloud-api.yandex.net/")) return Response.json({ href: "https://uploader12g.disk.yandex.net/upload?token=signed", method: "PUT" });
+      return new Response(null, { status: 201 });
+    }));
+    const response = await privatePhotos(request("PUT", BASE, { "Content-Type": "image/webp" }, new Blob(["picture"])));
+    expect(response.status).toBe(201);
+    expect(hosts).toHaveLength(2);
+    expect(hosts[0].authorization).toBe(TOKEN);
+    expect(hosts[1].url).toContain("uploader12g.disk.yandex.net");
+    expect(hosts[1].authorization).toBeNull();
+  });
+
+  it("отклоняет похожий, но чужой адрес передачи файла", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ href: "https://uploader12g.disk.yandex.net.evil.example/upload", method: "PUT" })));
+    const response = await privatePhotos(request("PUT", BASE, { "Content-Type": "image/webp" }, new Blob(["picture"])));
+    expect(response.status).toBe(502);
+    expect(response.headers.get("X-Photo-Relay-Stage")).toBe("signed-link");
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+  });
 });
