@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyOperation, filterRecipes, formatAmount, scaleIngredient } from "../features/book/logic";
+import { applyOperation, baseServings, filterRecipes, formatAmount, formatServings, scaleIngredient, servingOptions } from "../features/book/logic";
 import { createDemoSnapshot } from "../features/book/demo-data";
 
 describe("логика семейной книги", () => {
@@ -39,5 +39,26 @@ describe("логика семейной книги", () => {
     const text = { ...numeric, id: "2", name: "Соль", amount: null, amountText: "по вкусу" };
     expect(scaleIngredient(numeric, 4, 8).amount).toBe(500);
     expect(formatAmount(scaleIngredient(text, 4, 8).amount, text.amountText)).toBe("по вкусу");
+  });
+
+  it("пересчитывает полпорции у известного выхода, не меняя исходный ингредиент", () => {
+    const recipe = createDemoSnapshot().recipes.find((item) => item.servings);
+    expect(recipe).toBeDefined();
+    const original = { id: "flour", name: "Мука", amount: 300, amountText: null, unit: "г", note: null, order: 0 };
+    expect(servingOptions(recipe!)).toEqual(expect.arrayContaining([0.5, 1, 1.5, 2, 2.5]));
+    expect(scaleIngredient(original, 4, 1.5).amount).toBe(112.5);
+    expect(original.amount).toBe(300);
+    expect(formatServings(1.5)).toBe("1,5");
+  });
+
+  it("использует один исходный рецепт как основу, если выход неизвестен", () => {
+    const recipe = { ...createDemoSnapshot().recipes[0], servings: null };
+    const numeric = { id: "flour", name: "Мука", amount: 300, amountText: null, unit: "г", note: null, order: 0 };
+    const text = { ...numeric, id: "salt", amount: null, amountText: "по вкусу" };
+    expect(baseServings(recipe)).toBe(1);
+    expect(recipe.servings).toBeNull();
+    expect(servingOptions(recipe).slice(0, 5)).toEqual([0.5, 1, 1.5, 2, 2.5]);
+    expect(scaleIngredient(numeric, baseServings(recipe), 1.5).amount).toBe(450);
+    expect(scaleIngredient(text, baseServings(recipe), 2.5).amountText).toBe("по вкусу");
   });
 });

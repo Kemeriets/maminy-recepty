@@ -1,4 +1,4 @@
-const CACHE_VERSION = "maminy-recipes-v1.3.10";
+const CACHE_VERSION = "maminy-recipes-v1.3.11";
 const IMAGE_CACHE_LIMIT_BYTES = 24 * 1024 * 1024;
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;

@@ -184,7 +184,7 @@ export function RecipeForm({ recipe, bookId, categories, onSave, onCancel, onDir
               <label className="field"><span>Категория</span><Controller control={form.control} name="categoryId" render={({ field }) => <Select value={field.value} onValueChange={field.onChange}><SelectTrigger><SelectValue placeholder="Выберите" /></SelectTrigger><SelectContent><SelectItem value="none">Без категории</SelectItem>{categories.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select>} /></label>
             </div>
             <div className="field-grid field-grid--three">
-              <label className="field"><span>Порций</span><Input {...form.register("servings")} inputMode="decimal" placeholder="4" aria-invalid={Boolean(form.formState.errors.servings)} /><small>{form.formState.errors.servings?.message}</small></label>
+              <label className="field"><span>Порций (если известно)</span><Input {...form.register("servings")} inputMode="decimal" placeholder="4" aria-invalid={Boolean(form.formState.errors.servings)} /><small>{form.formState.errors.servings?.message || "Можно оставить пустым — пересчёт всё равно будет работать."}</small></label>
               <label className="field"><span>Подготовка, мин</span><Input {...form.register("prepTimeMinutes")} inputMode="numeric" placeholder="20" /><small>{form.formState.errors.prepTimeMinutes?.message}</small></label>
               <label className="field"><span>Готовка, мин</span><Input {...form.register("cookTimeMinutes")} inputMode="numeric" placeholder="40" /><small>{form.formState.errors.cookTimeMinutes?.message}</small></label>
             </div>

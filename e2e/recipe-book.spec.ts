@@ -1,5 +1,63 @@
 import { expect, test } from "@playwright/test";
 
+test("каталог показывает все карточки и возвращает на прежнее место", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: /Открыть рецепт «Домашний борщ»/ })).toBeVisible();
+  await page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("maminy-recipes", 2);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const snapshot = await new Promise<{ recipes: Array<{ id: string; title: string }> }>((resolve, reject) => {
+      const request = db.transaction("snapshot", "readonly").objectStore("snapshot").get("current");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const template = snapshot.recipes[0];
+    const recipes = Array.from({ length: 48 }, (_, i) => ({ ...template, id: `test-recipe-${i}`, title: `Тестовый рецепт ${i + 1}` }));
+    snapshot.recipes = recipes;
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("snapshot", "readwrite");
+      tx.objectStore("snapshot").put(snapshot, "current");
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  });
+  await page.reload();
+  await expect(page.locator(".recipe-card")).toHaveCount(48);
+  await expect(page.getByRole("button", { name: /Показать ещё/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Открыть рецепт «Тестовый рецепт 48»" }).scrollIntoViewIfNeeded();
+  const before = await page.evaluate(() => scrollY);
+  expect(before).toBeGreaterThan(100);
+  await page.getByRole("button", { name: "Открыть рецепт «Тестовый рецепт 48»" }).click();
+  await page.getByRole("button", { name: "Назад", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => scrollY), { timeout: 4000 }).toBeGreaterThan(before - 150);
+});
+
+test("без известного выхода можно выбрать 1,5 и 2,5 исходного рецепта", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Добавить рецепт", exact: true }).click();
+  await page.getByLabel("Название блюда *").fill("Пирог без указанного выхода");
+  await page.getByLabel("Название", { exact: true }).first().fill("Мука");
+  await page.getByLabel("Количество", { exact: true }).first().fill("300");
+  await page.getByLabel("Единица", { exact: true }).first().fill("г");
+  await page.getByLabel("Шаг 1", { exact: true }).fill("Смешать продукты.");
+  await page.getByRole("button", { name: "Сохранить рецепт", exact: true }).last().click();
+  await expect(page.getByText("1 — ингредиенты как в исходном рецепте, 1,5 — в полтора раза больше.", { exact: false })).toBeVisible();
+  await page.getByRole("combobox", { name: "Количество исходных рецептов" }).click();
+  await page.getByRole("option", { name: "1,5", exact: true }).click();
+  await expect(page.locator(".ingredient-list").getByText("450 г")).toBeVisible();
+  await page.getByRole("combobox", { name: "Количество исходных рецептов" }).click();
+  await page.getByRole("option", { name: "2,5", exact: true }).click();
+  await expect(page.locator(".ingredient-list").getByText("750 г")).toBeVisible();
+  await page.getByRole("button", { name: "Режим готовки", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Увеличить на полпорции" }).click();
+  await expect(dialog.getByText("450 г")).toBeVisible();
+});
+
 test("режим готовки занимает весь экран и сохраняет отметки отдельно от рецепта", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: /Открыть рецепт «Домашний борщ»/ }).click();

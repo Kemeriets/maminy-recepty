@@ -50,6 +50,22 @@ export function scaleIngredient(ingredient: Ingredient, fromServings: number | n
   return { ...ingredient, amount: Math.round((scaled + Number.EPSILON) * 100) / 100 };
 }
 
+// An unknown yield is one original batch. Keep the stored servings null so we
+// never claim the original recipe feeds exactly one person.
+export function baseServings(recipe: Recipe): number {
+  return recipe.servings && recipe.servings > 0 ? recipe.servings : 1;
+}
+
+export function servingOptions(recipe: Recipe): number[] {
+  const original = baseServings(recipe);
+  const values = Array.from({ length: 32 }, (_, index) => (index + 1) / 2);
+  return [...new Set([...values, original, original * 2])].sort((a, b) => a - b);
+}
+
+export function formatServings(value: number): string {
+  return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(value);
+}
+
 export function formatAmount(value: number | null, amountText?: string | null): string {
   if (value === null) return amountText?.trim() ?? "";
   const rounded = Math.round((value + Number.EPSILON) * 100) / 100;

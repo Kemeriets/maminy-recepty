@@ -5,14 +5,14 @@ import { Check, ChevronLeft, Lightbulb, LockKeyhole, Minus, Plus, RotateCcw } fr
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
-import { formatAmount, scaleIngredient } from "../features/book/logic";
+import { baseServings, formatAmount, formatServings, scaleIngredient } from "../features/book/logic";
 import type { Recipe } from "../types/book";
 
 interface WakeLockSentinelLike { release(): Promise<void>; addEventListener(type: "release", listener: () => void): void; }
 
 export function CookingMode({ recipe, open, onOpenChange }: { recipe: Recipe; open: boolean; onOpenChange: (open: boolean) => void }) {
   const [completed, setCompleted] = useState<Set<string>>(new Set());
-  const [servings, setServings] = useState(recipe.servings || 1);
+  const [servings, setServings] = useState(baseServings(recipe));
   const [wakeActive, setWakeActive] = useState(false);
   const wakeLock = useRef<WakeLockSentinelLike | null>(null);
 
@@ -64,17 +64,16 @@ export function CookingMode({ recipe, open, onOpenChange }: { recipe: Recipe; op
           <section className="cooking-mode__ingredients">
             <div className="section-heading-row">
               <h2>Ингредиенты</h2>
-              {recipe.servings ? (
-                <div className="portion-stepper" aria-label="Количество порций">
-                  <button type="button" disabled={servings <= 1} onClick={() => setServings((value) => Math.max(1, value - 1))} aria-label="Уменьшить порции"><Minus /></button>
-                  <span><strong>{servings}</strong> порц.</span>
-                  <button type="button" onClick={() => setServings((value) => value + 1)} aria-label="Увеличить порции"><Plus /></button>
+              <div className="portion-stepper" aria-label={recipe.servings ? "Количество порций" : "Количество исходных рецептов"}>
+                  <button type="button" disabled={servings <= 0.5} onClick={() => setServings((value) => Math.max(0.5, value - 0.5))} aria-label="Уменьшить на полпорции"><Minus /></button>
+                  <span><strong>{formatServings(servings)}</strong> {recipe.servings ? "порц." : "× рецепт"}</span>
+                  <button type="button" onClick={() => setServings((value) => value + 0.5)} aria-label="Увеличить на полпорции"><Plus /></button>
                 </div>
-              ) : null}
             </div>
+            {!recipe.servings && <p className="servings-explanation">1 — исходные количества; 1,5 — в полтора раза больше.</p>}
             <ul>
               {recipe.ingredients.map((original) => {
-                const item = scaleIngredient(original, recipe.servings, servings);
+                const item = scaleIngredient(original, baseServings(recipe), servings);
                 return <li key={item.id}><span>{item.name}</span><strong>{[formatAmount(item.amount, item.amountText), item.unit].filter(Boolean).join(" ")}</strong>{item.note ? <small>{item.note}</small> : null}</li>;
               })}
             </ul>

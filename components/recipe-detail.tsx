@@ -9,7 +9,7 @@ import { Checkbox } from "./ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "./ui/alert-dialog";
 import { CookingMode } from "./cooking-mode";
-import { formatAmount, scaleIngredient, totalRecipeMinutes } from "../features/book/logic";
+import { baseServings, formatAmount, formatServings, scaleIngredient, servingOptions, totalRecipeMinutes } from "../features/book/logic";
 import { createId, nowIso } from "../lib/ids";
 import type { Category, Recipe, ShoppingItem } from "../types/book";
 import { recipeShareText } from "../services/recipe-share";
@@ -26,7 +26,7 @@ interface RecipeDetailProps {
 }
 
 export function RecipeDetail({ recipe, category, onBack, onEdit, onFavorite, onDelete, onRestore, onAddShopping }: RecipeDetailProps) {
-  const [servings, setServings] = useState(recipe.servings || 1);
+  const [servings, setServings] = useState(baseServings(recipe));
   const [cooking, setCooking] = useState(false);
   const [shoppingOpen, setShoppingOpen] = useState(false);
   const [shoppingBusy, setShoppingBusy] = useState(false);
@@ -34,10 +34,10 @@ export function RecipeDetail({ recipe, category, onBack, onEdit, onFavorite, onD
   const [photoRetry, setPhotoRetry] = useState(0);
   const [selectedIngredients, setSelectedIngredients] = useState<Set<string>>(() => new Set(recipe.ingredients.map((item) => item.id)));
   const minutes = totalRecipeMinutes(recipe);
-  const scaledIngredients = useMemo(() => recipe.ingredients.map((item) => scaleIngredient(item, recipe.servings, servings)), [recipe, servings]);
+  const scaledIngredients = useMemo(() => recipe.ingredients.map((item) => scaleIngredient(item, baseServings(recipe), servings)), [recipe, servings]);
 
   const share = async () => {
-    const text = recipeShareText(recipe, scaledIngredients, recipe.servings ? servings : null);
+    const text = recipeShareText(recipe, scaledIngredients, recipe.servings ? servings : null, !recipe.servings ? servings : null);
     try {
       if (navigator.share) await navigator.share({ title: recipe.title, text });
       else { await navigator.clipboard.writeText(text); toast.success("Полный текст рецепта скопирован"); }
@@ -95,7 +95,7 @@ export function RecipeDetail({ recipe, category, onBack, onEdit, onFavorite, onD
           {recipe.description ? <p className="recipe-lead">{recipe.description}</p> : null}
           <div className="recipe-facts">
             {minutes ? <span><Clock3 /> {minutes} мин</span> : null}
-            {recipe.servings ? <span><ChefHat /> {recipe.servings} порций</span> : null}
+            {recipe.servings ? <span><ChefHat /> {formatServings(recipe.servings)} порций</span> : null}
           </div>
           <div className="recipe-primary-actions">
             <Button size="lg" onClick={() => setCooking(true)}><ChefHat /> Режим готовки</Button>
@@ -108,15 +108,14 @@ export function RecipeDetail({ recipe, category, onBack, onEdit, onFavorite, onD
         <section className="recipe-section ingredients-section">
           <div className="section-heading-row">
             <div><p className="section-kicker">Подготовьте</p><h2>Ингредиенты</h2></div>
-            {recipe.servings ? (
-              <div className="servings-select"><span>Порций</span>
+            <div className="servings-select"><span>{recipe.servings ? "Порций" : "Количество"}</span>
                 <Select value={String(servings)} onValueChange={(value) => setServings(Number(value))}>
-                  <SelectTrigger aria-label="Количество порций"><SelectValue /></SelectTrigger>
-                  <SelectContent>{[...new Set([...Array.from({ length: 16 }, (_, index) => index + 1), recipe.servings, recipe.servings * 2])].sort((a, b) => a - b).map((value) => <SelectItem key={value} value={String(value)}>{String(value).replace(".", ",")}</SelectItem>)}</SelectContent>
+                  <SelectTrigger aria-label={recipe.servings ? "Количество порций" : "Количество исходных рецептов"}><SelectValue /></SelectTrigger>
+                  <SelectContent>{servingOptions(recipe).map((value) => <SelectItem key={value} value={String(value)}>{formatServings(value)}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
-            ) : null}
           </div>
+          {!recipe.servings && <p className="servings-explanation">Выход не указан: 1 — ингредиенты как в исходном рецепте, 1,5 — в полтора раза больше.</p>}
           <ul className="ingredient-list">
             {scaledIngredients.map((item) => (
               <li key={item.id}><span>{item.name}{item.note ? <small>{item.note}</small> : null}</span><strong>{[formatAmount(item.amount, item.amountText), item.unit].filter(Boolean).join(" ") || "по вкусу"}</strong></li>
@@ -143,7 +142,7 @@ export function RecipeDetail({ recipe, category, onBack, onEdit, onFavorite, onD
       <Dialog open={shoppingOpen} onOpenChange={setShoppingOpen}>
         <DialogContent className="shopping-picker">
           <DialogTitle>Что добавить в покупки?</DialogTitle>
-          <DialogDescription>Снимите отметку с того, что уже есть дома. Количество рассчитано на {servings} порц.</DialogDescription>
+          <DialogDescription>Снимите отметку с того, что уже есть дома. {recipe.servings ? `Количество рассчитано на ${formatServings(servings)} порц.` : `Количество: ${formatServings(servings)} от исходного рецепта.`}</DialogDescription>
           <div className="shopping-picker__list">
             {scaledIngredients.map((item) => <label key={item.id}><Checkbox checked={selectedIngredients.has(item.id)} onCheckedChange={(checked) => setSelectedIngredients((current) => { const next = new Set(current); if (checked) next.add(item.id); else next.delete(item.id); return next; })} /><span>{item.name}</span><strong>{[formatAmount(item.amount, item.amountText), item.unit].filter(Boolean).join(" ") || "по вкусу"}</strong></label>)}
           </div>

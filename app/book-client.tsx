@@ -57,6 +57,9 @@ function BookExperience({ initialView, initialRecipeId }: { initialView: Initial
   const reloadingForUpdate = useRef(false);
   const editorDirty = useRef(false);
   const previousRoute = useRef("");
+  const catalogScrollY = useRef(0);
+  const restoreCatalogScroll = useRef(false);
+  const routeWasRecipe = useRef(Boolean(initialRecipeId));
   const onEditorDirtyChange = useCallback((dirty: boolean) => { editorDirty.current = dirty; }, []);
   const performSafely = async (operation: BookOperationInput) => {
     try { await perform(operation); }
@@ -128,7 +131,9 @@ function BookExperience({ initialView, initialRecipeId }: { initialView: Initial
       previousRoute.current = location.href;
       const path = portable ? location.hash.replace(/^#\/?/, "") : location.pathname.replace(/^\//, "");
       const recipeMatch = path.match(/^recipe\/([^/]+)/);
-      if (recipeMatch) { setSelectedRecipeId(decodeURIComponent(recipeMatch[1])); setEditingRecipe(undefined); return; }
+      if (recipeMatch) { routeWasRecipe.current = true; setSelectedRecipeId(decodeURIComponent(recipeMatch[1])); setEditingRecipe(undefined); return; }
+      restoreCatalogScroll.current = routeWasRecipe.current && (!path || path === "home" || path === "catalog");
+      routeWasRecipe.current = false;
       setSelectedRecipeId(null); setEditingRecipe(undefined);
       if (["home", "catalog", "random", "shopping", "settings", "import", "trash"].includes(path)) setView(path as InitialView);
       else setView("catalog");
@@ -138,6 +143,13 @@ function BookExperience({ initialView, initialRecipeId }: { initialView: Initial
     window.addEventListener("hashchange", readRoute);
     return () => { window.removeEventListener("popstate", readRoute); window.removeEventListener("hashchange", readRoute); };
   }, [portable]);
+
+  useEffect(() => {
+    if (!restoreCatalogScroll.current || selectedRecipeId || (view !== "home" && view !== "catalog")) return;
+    restoreCatalogScroll.current = false;
+    const frame = requestAnimationFrame(() => window.scrollTo({ top: catalogScrollY.current }));
+    return () => cancelAnimationFrame(frame);
+  }, [selectedRecipeId, view]);
 
   const routeUrl = (next: InitialView | "recipe", recipeId?: string) => {
     if (portable) {
@@ -151,6 +163,8 @@ function BookExperience({ initialView, initialRecipeId }: { initialView: Initial
   const navigate = (next: InitialView) => {
     if (editorDirty.current && !window.confirm("Закрыть форму без сохранения? Введённые данные останутся в черновике.")) return;
     editorDirty.current = false;
+    restoreCatalogScroll.current = false;
+    routeWasRecipe.current = false;
     if (next === "home" || next === "catalog") { setQuery(""); setCategoryId(null); setFavoriteOnly(false); setWithPhoto(null); }
     setView(next); setSelectedRecipeId(null); setEditingRecipe(undefined);
     history.pushState({}, "", routeUrl(next));
@@ -158,16 +172,20 @@ function BookExperience({ initialView, initialRecipeId }: { initialView: Initial
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
   const openRecipe = (id: string) => {
+    if (view === "home" || view === "catalog") catalogScrollY.current = window.scrollY;
+    routeWasRecipe.current = true;
     setSelectedRecipeId(id); setEditingRecipe(undefined);
     history.pushState({}, "", routeUrl("recipe", id));
     previousRoute.current = location.href;
     window.scrollTo({ top: 0 });
   };
   const closeRecipe = () => {
+    routeWasRecipe.current = false;
+    restoreCatalogScroll.current = view === "home" || view === "catalog";
     setSelectedRecipeId(null); setEditingRecipe(undefined);
     history.pushState({}, "", routeUrl(view));
     previousRoute.current = location.href;
-    window.scrollTo({ top: 0 });
+    if (!restoreCatalogScroll.current) window.scrollTo({ top: 0 });
   };
 
   const selectedRecipe = selectedRecipeId ? snapshot.recipes.find((recipe) => recipe.id === selectedRecipeId) ?? null : null;
@@ -236,15 +254,12 @@ function LibraryView({ snapshot, loading, mode, query, deferredQuery, categoryId
   snapshot: ReturnType<typeof useBook>["snapshot"]; loading: boolean; mode: "home" | "catalog"; query: string; deferredQuery: string; categoryId: string | null; favoriteOnly: boolean; withPhoto: boolean | null;
   onQuery: (value: string) => void; onCategory: (value: string | null) => void; onFavoriteOnly: (value: boolean) => void; onWithPhoto: (value: boolean | null) => void; onMode: (value: InitialView) => void; onSettings: () => void; onOpen: (id: string) => void; onFavorite: (recipe: Recipe) => void;
 }) {
-  const [pagination, setPagination] = useState({ key: "", count: 24 });
   const activeRecipes = snapshot.recipes.filter((recipe) => !recipe.deletedAt);
   const filtered = filterRecipes(activeRecipes, { query: deferredQuery, categoryId, favoriteOnly, withPhoto });
   const favorites = activeRecipes.filter((recipe) => recipe.favorite).slice(0, 6);
   const recent = [...activeRecipes].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 6);
   const todayRecipe = activeRecipes.length ? activeRecipes[(new Date().getDate() + new Date().getMonth()) % activeRecipes.length] : null;
   const hasFilters = Boolean(categoryId || favoriteOnly || withPhoto !== null);
-  const filterKey = `${deferredQuery}|${categoryId ?? ""}|${favoriteOnly}|${withPhoto ?? ""}`;
-  const visibleCount = pagination.key === filterKey ? pagination.count : 24;
   const card = (recipe: Recipe) => <RecipeCard key={recipe.id} recipe={recipe} category={snapshot.categories.find((item) => item.id === recipe.categoryId)} onOpen={() => onOpen(recipe.id)} onFavorite={() => onFavorite(recipe)} />;
   const resetFilters = () => { onCategory(null); onFavoriteOnly(false); onWithPhoto(null); };
   const selectSection = (category: string | null, favorites = false) => { onCategory(category); onFavoriteOnly(favorites); onWithPhoto(null); onMode("catalog"); };
@@ -270,7 +285,7 @@ function LibraryView({ snapshot, loading, mode, query, deferredQuery, categoryId
           <button className={`toggle-filter ${favoriteOnly ? "is-active" : ""}`} type="button" aria-pressed={favoriteOnly} onClick={() => onFavoriteOnly(!favoriteOnly)}><Heart fill={favoriteOnly ? "currentColor" : "none"} /> Только любимые</button><Button variant="outline" onClick={resetFilters}>Сбросить фильтры</Button>
         </RecipeFiltersPopover>
       </div>
-      {loading ? <CardSkeletons /> : filtered.length ? <><div className="recipe-grid">{filtered.slice(0, visibleCount).map(card)}</div>{filtered.length > visibleCount && <div className="load-more"><Button variant="outline" size="lg" onClick={() => setPagination({ key: filterKey, count: visibleCount + 24 })}>Показать ещё {Math.min(24, filtered.length - visibleCount)}</Button></div>}</> : <div className="empty-state"><div>{favoriteOnly ? <Heart /> : <Search />}</div><h2>{query ? "Ничего не нашли" : favoriteOnly ? "Пока нет любимых рецептов" : categoryId ? "В этой категории пока пусто" : "Здесь пока нет рецептов"}</h2><p>{query ? "Попробуйте другое название или ингредиент. Фильтры тоже влияют на поиск." : favoriteOnly ? "Нажмите сердечко на рецепте — он появится здесь." : categoryId ? "Выберите другую категорию или добавьте новый рецепт." : "Нажмите «Добавить рецепт», чтобы сохранить первый."}</p>{hasFilters && <Button variant="outline" onClick={resetFilters}>Сбросить фильтры</Button>}</div>}
+      {loading ? <CardSkeletons /> : filtered.length ? <div className="recipe-grid">{filtered.map(card)}</div> : <div className="empty-state"><div>{favoriteOnly ? <Heart /> : <Search />}</div><h2>{query ? "Ничего не нашли" : favoriteOnly ? "Пока нет любимых рецептов" : categoryId ? "В этой категории пока пусто" : "Здесь пока нет рецептов"}</h2><p>{query ? "Попробуйте другое название или ингредиент. Фильтры тоже влияют на поиск." : favoriteOnly ? "Нажмите сердечко на рецепте — он появится здесь." : categoryId ? "Выберите другую категорию или добавьте новый рецепт." : "Нажмите «Добавить рецепт», чтобы сохранить первый."}</p>{hasFilters && <Button variant="outline" onClick={resetFilters}>Сбросить фильтры</Button>}</div>}
     </>}
   </section>;
 }
